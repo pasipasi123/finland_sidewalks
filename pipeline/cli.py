@@ -18,13 +18,14 @@ from shapely.geometry import LineString, mapping, shape
 from shapely.strtree import STRtree
 
 from .rules import category, sidewalk_sides, candidate_category, tag_rejection, walking_surface
-from .corridor import filter_outer_paths,flat_lines
+from .corridor import filter_outer_paths,flat_lines,direction_runs
+from .network import WalkingNetwork,NETWORK_POLICY
 
 TO_METRES = Transformer.from_crs(4326, 3067, always_xy=True).transform
 TO_LONLAT = Transformer.from_crs(3067, 4326, always_xy=True).transform
-VERSION = '1.3.0'
+VERSION = '1.5.0'
 FOOTWAY_GEOMETRY = {'max_distance_m':20, 'max_angle_degrees':20,
-                    'min_run_m':15}
+                    'min_run_m':15,'max_turn_degrees':45}
 
 def transform(function, geometry):
     return coordinate_transform(geometry, function, interleaved=False)
@@ -130,6 +131,7 @@ def measure(boundary, ways, distance=20, progress=None, rejections=None, corrido
     tree = STRtree(geometries)
     if progress:
         progress(f'{len(roads):,} ajoradan osaa; erillisten väylien läheisyysvertailu alkaa')
+    network=WalkingNetwork(ways,level,distance)
     paths = []
     candidates = []
     stats = Counter()
@@ -151,6 +153,11 @@ def measure(boundary, ways, distance=20, progress=None, rejections=None, corrido
         if kind=='road':
             continue
         strict = kind in {'footway','blocker_only_footway'}
+        if strict:
+            network_reason=network.rejection(tags,geom)
+            if network_reason:
+                rejections[str(oid)]=network_reason
+                continue
         match_distance = min(distance,FOOTWAY_GEOMETRY['max_distance_m']) if strict else distance
         angle = FOOTWAY_GEOMETRY['max_angle_degrees'] if strict else 30
         matched = []
@@ -172,10 +179,9 @@ def measure(boundary, ways, distance=20, progress=None, rejections=None, corrido
             continue
         if strict:
             merged = line_merge(union_all(matched))
-            runs = [merged] if merged.geom_type=='LineString' else list(merged.geoms)
-            runs = [run for run in runs if run.geom_type=='LineString' and run.length >= FOOTWAY_GEOMETRY['min_run_m']-1e-6]
+            runs = [run for line in flat_lines(merged) for run in direction_runs(line,FOOTWAY_GEOMETRY['max_turn_degrees']) if run.length >= FOOTWAY_GEOMETRY['min_run_m']-1e-6]
             if not runs:
-                rejections[str(oid)] = 'kadunvarsijakso_liian_lyhyt'
+                rejections[str(oid)] = 'jyrkat_kaanteet_katkaisevat_jakson' if any(line.length>=FOOTWAY_GEOMETRY['min_run_m'] for line in flat_lines(merged)) else 'kadunvarsijakso_liian_lyhyt'
                 continue
             matched = [part for run in runs for part in pieces(run)]
         for part in matched:
@@ -199,7 +205,7 @@ def measure(boundary, ways, distance=20, progress=None, rejections=None, corrido
             continue
         if kind=='footway' and oid in blocked_ids:
             merged=line_merge(union_all(parts))
-            parts=[part for run in flat_lines(merged) if run.length>=FOOTWAY_GEOMETRY['min_run_m']-1e-6 for part in pieces(run)]
+            parts=[part for line in flat_lines(merged) for run in direction_runs(line,FOOTWAY_GEOMETRY['max_turn_degrees']) if run.length>=FOOTWAY_GEOMETRY['min_run_m']-1e-6 for part in pieces(run)]
         counted=False
         for part in parts:
             clipped=part.intersection(boundary)
@@ -289,6 +295,7 @@ def compute(args):
         result = {'code':code,'name':feature['properties']['name'],'population':n,'population_date':pop['date'],'population_source':pop['source'],'km':km,'total_km':round(total,6),'m_per_resident':round(total*1000/n,4),'geometry':feature['geometry'],'osm':meta,'distance_m':args.distance,'signature':signature,'method_version':VERSION,'generated_at':datetime.now(timezone.utc).isoformat()}
         result['diagnostics'] = {'input_ways':len(ways), 'audit_features':len(audit), 'calculation_seconds':round(time.perf_counter()-started,3)}
         result['footway_geometry'] = FOOTWAY_GEOMETRY
+        result['network_policy'] = NETWORK_POLICY
         result['surface_policy'] = {'missing':'assumed_asphalt','known_non_hard':'excluded'}
         result['corridor_policy'] = {'innermost_walking_route_only':True,'side_order_tolerance_m':0.25,'living_street_included':False}
         result['assumed_asphalt_km'] = round(stats['assumed_asphalt']/1000,6)

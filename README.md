@@ -2,7 +2,7 @@
 
 Suomen kuntien **kadunvarsien jalkakäytävät kilometreinä ja metreinä asukasta kohti**. Python-laskenta käyttää paikallista OSM-PBF:ää ja kuntakohtaista SQLite-välimuistia. Tulokset viedään GeoPackageen karttatarkistusta varten ja valmiiksi JSON-aineistoksi erillistä käyttöliittymää varten. Overpassia tai tietokantapalvelinta ei tarvita.
 
-**Nykytila:** Oulun menetelmäversio **1.3.0**, 7.11.2026: **87,371 km ja 0,4018 m/asukas**. Lähempi saman kadunpuolen jalankulkuväylä sulkee pois kauemman rinnakkaisen viivan; living street -varret on rajattu pois. Puuttuva pinta oletetaan asfaltiksi. Välimuistissa on 694 255 väylää ja 308 kuntarajaa. Lähteinä ovat Geofabrikin OSM-otos 5.11.2026 ja Tilastokeskuksen väestö 217 469 / 31.12.2025. [Nykyinen raportti](reports/oulu-v1.3.0.md), aiemmat [1.2.0](reports/oulu-v1.2.0.md), [1.1.0](reports/oulu-v1.1.0.md) ja [ensimmäinen pilotti](reports/oulu-pilot.md).
+**Nykytila:** Oulun menetelmäversio **1.5.0**, 7.11.2026: **85,823 km ja 0,3946 m/asukas**. Verkkotopologia suodattaa sisäverkon satunnaisia katuosumia ja suojaa risteyksiin yltäviä reittejä. Jyrkät käännökset katkaisevat katua seuraavan vähimmäisjakson; lähempi saman kadunpuolen jalankulkuväylä sulkee pois kauemman rinnakkaisen viivan. Living street -varret on rajattu pois, ja puuttuva pinta oletetaan asfaltiksi. Välimuistissa on 694 255 väylää ja 308 kuntarajaa. [Nykyinen raportti](reports/oulu-v1.5.0.md), [edellinen ajo](reports/oulu-v1.4.0.md).
 
 ## Laskennan käyttöönotto Windowsissa
 
@@ -111,7 +111,7 @@ Päivitys säilyttää tiedoston identiteetin, tasojen nimet, nykyiset tyylitaul
 
 `publish` tässä tarkoittaa paikallisen käyttöliittymäaineiston muodostamista; se ei siirrä mitään verkkoon. Varsinainen web-käyttöliittymä on erillinen toteutus.
 
-## Menetelmä v1.3.0
+## Menetelmä v1.5.0
 
 Kaikki pituudet ja etäisyydet lasketaan metreinä **ETRS-TM35FIN / EPSG:3067** -koordinaatistossa. Kuntarajan ulkopuoliset pituudet leikataan pois. Oletusetäisyys on **20 m ajoradan keskilinjasta**, muutettavissa `--distance 15` jne. Tämä on tutkimusparametri, ei OSM-standardin sääntö. Vertaa esimerkiksi 10 / 15 / 20 / 25 metrin ajoja erillisissä tuloshakemistoissa ennen johtopäätöksiä.
 
@@ -136,6 +136,20 @@ Jos käytössä on alkuperäinen 1.0-välimuisti, päivitä puuttuvat ajoratavii
 Erilliset viivat pilkotaan alkuperäisiä taitepisteitä kunnioittaen enintään 5 metrin paloiksi ja ajoradat enintään 25 metrin paloiksi. `layer`, `bridge` ja `tunnel` vastaavat toisiaan. Tavallisten footwayiden suuntaero on enintään 20° ja hyväksyttyjen viivojen yhtenäisen jakson vähimmäispituus 15 m; muut analyysin väyläluokat käyttävät edelleen 30° suuntaeroa. Pituus leikataan täsmällisesti ajoradan etäisyyspuskurin ja kuntarajan sisään. Poikittaiset osuudet ja lyhyet kiinteistöyhteyksien rinnakkaiset päät vähenevät. Koko OSM-wayn hyväksymisprosenttia ei vaadita: vain osa samasta waysta voi olla jalkakäytävää.
 
 Erillisten mukaan otettavien jalankulkuväylien pintojen sallittu lista on `asphalt`, `paved`, `paving_stones`, `paving_stones:30`, `concrete`, `concrete:plates`, `concrete:lanes`, `sett`, `cobblestone`, `cobblestone:flattened`, `unhewn_cobblestone`, `bricks`, `tiles`. `footway:surface` ohittaa yleisen `surface`-tägin. Puuttuva pintatieto oletetaan asfaltiksi. `compacted`, sorat, maa-ainekset, puu ja muut pintatietoon merkityt sallittuun listaan kuulumattomat arvot jäävät pois mukaan otettavista erillisistä väylistä. Moniarvoisen `;`-listan jokaisen arvon on oltava sallittu. Asfalttioletus ei muuta OSM-tägejä eikä ole havainto todellisesta pintamateriaalista. Sen osuus lasketaan valmiiksi tuloksen `assumed_asphalt_km`-kenttään (erilliset mukaan otetut jalankulkuväylät). Yhdistettyjen ja erottelultaan tuntemattomien poissuljettuja vertailusummia ei rajata pinnan perusteella.
+
+### Suuntauksen jatkuvuus
+
+15 metrin vähimmäisjakso tarkoittaa myös suunnaltaan jatkuvaa jaksoa. Yli 45 asteen äkillinen suunnanmuutos katkaisee jakson ennen pituuden tarkistusta. Näin tontin mutkitteleva yhteys ei voi koota vähimmäispituutta vuorotellen kahden risteävän kadun suuntaisista lyhyistä pätkistä. Ehto koskee tavallisia footwayitä ja niiden fyysistä estekontekstia; loivasti kaartuva viiva säilyy jatkuvana. Aidon kadunkulman kaksi riittävän pitkää sivua voidaan hyväksyä erikseen. Sama sääntö tarkistetaan lähempien väylien takaa poistettujen osuuksien jälkeen.
+
+`hylkayssyy=jyrkat_kaanteet_katkaisevat_jakson` kertoo tapauksesta, jossa yhtenäinen yhdistetty geometria olisi riittävän pitkä mutta sen suunnaltaan jatkuvat jaksot eivät ole. Käyttäjän kohde 1272508397 on tämän säännön regressiotestinä. Tämän lisäksi tarvitaan edelleen etäisyys-, kadunsuuntaisuus-, pinta- ja lähimmän kulkureitin ehdot; viivan muoto ei yksin todista sen hallinnollista käyttötarkoitusta.
+
+### Sisäverkon satunnaiset katuosumat
+
+Geometrioiden yhteisistä alkuperäisistä taitepisteistä muodostetaan jalankulkuverkko, tasotiedot erotellen. Koordinaatit yhdistetään millimetrin tarkkuudella; kyse on välimuistin geometrioista johdetusta verkosta. Yksittäisen OSM-wayn päissä seurataan haarautumattomia jatkoja myös seuraaviin wayhin.
+
+Vahva sisäverkkoepäily hylätään, kun katuun osuvan reitin toinen pää liittyy haarautuvaan polkuverkkoon yli 25 m etäisyydellä kadusta ja toinen pää jää umpinaiseksi kadun lähelle keskellä risteysväliä. Myös molemmista päistään etäämpään haarautuvaan sisäverkkoon liittyvä katuosuma hylätään. 25 m vastaa oletusetäisyyttä 20 m + sisäverkon marginaalia 5 m. Risteyksen tai kadun päätepisteen 25 m lähiympäristö suojaa hylkäykseltä. Pitkä, yli 250 m haarautumaton jatko ja sulkeutuvat ketjut säilytetään varovaisuusperiaatteella.
+
+Koko kytkeytynyttä komponenttia ei luokitella samalla tavalla. Kadunvarsireitistä tontille lähtevä sivuhaara ei itsessään hylkää pääreittiä. `hylkayssyy=sisaverkon_paattyva_katuosuma` tai `sisaverkon_lapi_kulkeva_katuosuma` näyttää hylkäysperusteen. Hautausmaan kohde 1144437799 on pysyvässä regressiotestissä. Tässä vaiheessa ei käytetä kiinteistörajoja, hautausmaapolygoneja tai uutta API-avainta. OSM-verkon puutteet voivat silti vaikuttaa tulkintaan.
 
 ### Lähin saman kadunpuolen jalankulkuväylä
 

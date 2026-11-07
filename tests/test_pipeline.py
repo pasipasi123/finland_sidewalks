@@ -48,6 +48,46 @@ class Rules(unittest.TestCase):
         self.assertEqual(category({'highway':'footway','surface':'paving_stones','lit':'yes'}),'footway')
 
 class Geometry(unittest.TestCase):
+    def test_reported_cemetery_network_spur(self):
+        f=json.loads((Path(__file__).parent/'fixtures/oulu_cemetery_network.json').read_text(encoding='utf-8'))
+        ways=[(w['id'],w['tags'],transform(TO_METRES,shape(w['geometry']))) for w in f['ways']]
+        rejected={};_,a=measure(transform(TO_METRES,shape(f['boundary'])),ways,rejections=rejected)
+        self.assertNotIn(1144437799,{row['properties']['osm_id'] for row in a})
+        self.assertEqual(rejected['1144437799'],'sisaverkon_paattyva_katuosuma')
+
+    def test_interior_network_terminal_spur_across_way_ids(self):
+        ways=[way(1,[(0,0),(200,0)],highway='residential'),way(2,[(60,45),(60,8),(90,8)],highway='footway'),way(3,[(90,8),(130,8)],highway='footway'),way(4,[(30,45),(60,45),(90,45)],highway='footway')]
+        stats,_=measure(box(-50,-50,250,150),ways)
+        self.assertEqual(stats['footway'],0)
+
+    def test_tangent_estate_branch_does_not_poison_street_sidewalk(self):
+        ways=[way(1,[(0,0),(200,0)],highway='residential'),way(2,[(30,8),(100,8),(170,8)],highway='footway'),way(3,[(100,8),(100,45)],highway='footway'),way(4,[(70,45),(100,45),(130,45)],highway='footway')]
+        stats,_=measure(box(-50,-50,250,150),ways)
+        self.assertAlmostEqual(stats['footway'],140)
+
+    def test_street_endpoint_protects_legitimate_connection(self):
+        ways=[way(1,[(0,0),(130,0)],highway='residential'),way(2,[(60,45),(60,8),(130,8)],highway='footway'),way(3,[(30,45),(60,45),(90,45)],highway='footway')]
+        stats,_=measure(box(-50,-50,250,150),ways)
+        self.assertAlmostEqual(stats['footway'],70)
+
+    def test_reported_zigzag_property_path(self):
+        fixture=json.loads((Path(__file__).parent/'fixtures/oulu_zigzag_case.json').read_text(encoding='utf-8'))
+        ways=[(w['id'],w['tags'],transform(TO_METRES,shape(w['geometry']))) for w in fixture['ways']]
+        rejected={}
+        _,audit=measure(transform(TO_METRES,shape(fixture['boundary'])),ways,rejections=rejected)
+        self.assertNotIn(1272508397,{f['properties']['osm_id'] for f in audit})
+        self.assertEqual(rejected['1272508397'],'jyrkat_kaanteet_katkaisevat_jakson')
+
+    def test_zigzag_property_path_cannot_merge_matches_to_two_streets(self):
+        ways=[way(1,[(0,0),(100,0)],highway='residential'),way(2,[(0,0),(0,100)],highway='residential'),way(3,[(10,10),(12,10),(12,16),(22,16),(22,17)],highway='footway')]
+        stats,_=measure(box(-50,-50,150,150),ways)
+        self.assertEqual(stats['footway'],0)
+
+    def test_genuine_street_corner_keeps_both_long_legs(self):
+        ways=[way(1,[(0,0),(60,0)],highway='residential'),way(2,[(50,0),(50,60)],highway='residential'),way(3,[(0,8),(42,8),(42,50)],highway='footway')]
+        stats,_=measure(box(-50,-50,150,150),ways)
+        self.assertAlmostEqual(stats['footway'],84)
+
     def test_kirkkokatu_footway_with_implicit_walking_is_shared(self):
         fixture=json.loads((Path(__file__).parent/'fixtures/kirkkokatu_parking_case.json').read_text(encoding='utf-8'))
         ways=[(w['id'],w['tags'],transform(TO_METRES,shape(w['geometry']))) for w in fixture['ways']]

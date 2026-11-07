@@ -4,6 +4,27 @@ from shapely import union_all
 from shapely.geometry import LineString, Polygon
 from shapely.strtree import STRtree
 
+def direction_runs(line,max_turn_degrees=45):
+    """Split connected lines at sharp turns; connectivity alone is not continuity."""
+    coords=list(line.coords)
+    run=[coords[0]]
+    previous=None
+    threshold=math.cos(math.radians(max_turn_degrees))
+    for a,b in zip(coords,coords[1:]):
+        dx,dy=b[0]-a[0],b[1]-a[1]
+        length=math.hypot(dx,dy)
+        if length<=1e-8:
+            continue
+        direction=(dx/length,dy/length)
+        if previous is not None and previous[0]*direction[0]+previous[1]*direction[1]<threshold:
+            if len(run)>1:
+                yield LineString(run)
+            run=[a]
+        run.append(b)
+        previous=direction
+    if len(run)>1:
+        yield LineString(run)
+
 def flat_lines(geom):
     if geom.is_empty:
         return
