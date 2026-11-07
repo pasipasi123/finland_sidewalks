@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+data/raw/
+data/cache/
+data/results/
+data/exports/
+*.osm.pbf
+*.db
+*.nodes
+tests/tmp*/
