@@ -2,7 +2,14 @@
 
 Suomen kuntien **kadunvarsien jalkakäytävät kilometreinä ja metreinä asukasta kohti**. Python-laskenta käyttää paikallista OSM-PBF:ää ja kuntakohtaista SQLite-välimuistia. Tulokset viedään GeoPackageen karttatarkistusta varten ja valmiiksi JSON-aineistoksi erillistä käyttöliittymää varten. Overpassia tai tietokantapalvelinta ei tarvita.
 
-**Nykytila:** Oulun menetelmäversio **1.5.0**, 7.11.2026: **85,823 km ja 0,3946 m/asukas**. Verkkotopologia suodattaa sisäverkon satunnaisia katuosumia ja suojaa risteyksiin yltäviä reittejä. Jyrkät käännökset katkaisevat katua seuraavan vähimmäisjakson; lähempi saman kadunpuolen jalankulkuväylä sulkee pois kauemman rinnakkaisen viivan. Living street -varret on rajattu pois, ja puuttuva pinta oletetaan asfaltiksi. Välimuistissa on 694 255 väylää ja 308 kuntarajaa. [Nykyinen raportti](reports/oulu-v1.5.0.md), [edellinen ajo](reports/oulu-v1.4.0.md).
+**Nykytila 9.11.2026:** menetelmä **1.6.1**, kaksi kuntaa laskettu samalla OSM-otoksella ja samoilla säännöillä. Väestön viitepäivä on molemmissa 31.12.2025.
+
+| Kunta | Jalkakäytävät, km | m/asukas | Raportti |
+| --- | ---: | ---: | --- |
+| Oulu | 82,862 | 0,3810 | [Oulu 1.6.1](reports/oulu-v1.6.1.md) |
+| Tampere | 331,497 | 1,2588 | [Tampere 1.6.1](reports/tampere-v1.6.1.md) |
+
+Kokonaisreitin rakenne, määränpäärajoitus ja ajoradan sidewalk-tieto karsivat pihareittien katuosumia. Lyhyet linkit voivat saada tukea hyväksytyistä jalkakäytävistä ja ylityksistä; itse ylityspituuksia ei lasketa. Living street -varret on rajattu pois, ja puuttuva pinta oletetaan asfaltiksi. Välimuistissa on 709 996 väylää ja 308 kuntarajaa. Oulussa tehtyjen karttatarkistusten säännöt on nyt siirretty Tampereelle ensimmäistä tarkastelua varten. Luvut koskevat koko kuntia, eivät keskustoja.
 
 ## Laskennan käyttöönotto Windowsissa
 
@@ -47,6 +54,14 @@ Rajat poimitaan ehdoilla `boundary=administrative`, `admin_level=8` ja kolminume
 
 Windowsissa Pyosmium voi pitää `.nodes`-indeksin varattuna prosessin loppuun. Jos ohjelma ilmoittaa säilytetystä indeksistä, sen voi poistaa komennon päätyttyä. Uusi OSM-otos valmistellaan **uuteen välimuistitiedostoon**; vanhaa ei ylikirjoiteta.
 
+Menetelmästä 1.6.1 alkaen ylitysviivat säilytetään yhteystietona (`crossing_context`), vaikka niiden pituutta ei lasketa jalkakäytäviin. Jos välimuistin `cache_selection_version` on 3, lisää puuttuvat ylitykset samalla alkuperäisellä PBF:llä:
+
+```powershell
+./.venv/Scripts/python.exe -m scripts.extend_crossing_context
+```
+
+Laajennus tarkistaa PBF:n SHA256-summan, lukee vain ylitysten tarvitsemat solmut muistiin ja päivittää valintaversion neloseen. Uusi `prepare` sisältää tämän suoraan. Aiemmat valintaversiot tarvitsevat ensin myös `scripts.extend_reference_roads`- ja `scripts.extend_walking_candidates`-laajennukset tai uuden valmistelun.
+
 ### 3. Lisää oikea väestöaineisto
 
 Vie esimerkiksi [Tilastokeskuksen](https://stat.fi/) kuntakohtaiset väestöluvut UTF-8 CSV:ksi `data/population.csv`. Sarakkeet:
@@ -87,6 +102,13 @@ Komento päivittää `web/data/municipalities.json`-aineiston lasketuilla tuloks
 
 Oulun pilotin karttatarkistusta varten on tehty `data/exports/oulu_analyysi.gpkg` (EPSG:3067). Avaa se esimerkiksi QGISissä. Tiedosto sisältää omat tasot ajoratatägeistä lasketuille jalkakäytäville, erillisille jalkakäytäville, pyörätiestä erotelluille osuuksille, poissuljetuille yhdistetyille väylille ja tuntemattomalle erottelulle.
 
+Tampereen vastaava aineisto on `data/exports/tampere_analyysi.gpkg`, samalla koordinaatistolla ja tasorakenteella. Laskenta ja vienti:
+
+```powershell
+./.venv/Scripts/python.exe -m pipeline.cli compute --codes 564,837 --population data/population.csv
+./.venv/Scripts/python.exe -m pipeline.export_gpkg --code 837 --output data/exports/tampere_analyysi.gpkg
+```
+
 Vertailutasoilla `osm_ajoradat` ja `osm_jalankulku_pyora` ovat laskennan välimuistin lähtöväylät myös niiltä osin, joilla kadunvarsisuodatus ei tuottanut osumia. Ne on leikattu kunnan rajaan ja 30 metrin puskuriin (20 metrin laskentaetäisyydellä). Nämä eivät sisällä kaikkia OSM:n highway-luokkia tai ennen laskentaa tagisäännöillä hylättyjä väyliä. Mukana ovat lisäksi `kuntaraja` ja lähteet sekä tulkintaohjeet sisältävä `laskentatiedot`-taulukko.
 
 Tulososuuksien `pituus_m` on laskettu pituus ja `osm_url` linkittää alkuperäiseen OSM-wayhin. Yleisimmät tägit ovat erillisissä sarakkeissa; kaikki lähtöväylän tägit ovat kentässä `tags_json`. Ajoratatägien geometria on **ajoradan keskilinja**, ei jalkakäytävän tarkka sijainti; `puoli` kertoo OSM-viivan suunnan mukaisen vasemman tai oikean puolen. Kummankin puolen osuudet voivat siksi piirtyä päällekkäin.
@@ -111,7 +133,7 @@ Päivitys säilyttää tiedoston identiteetin, tasojen nimet, nykyiset tyylitaul
 
 `publish` tässä tarkoittaa paikallisen käyttöliittymäaineiston muodostamista; se ei siirrä mitään verkkoon. Varsinainen web-käyttöliittymä on erillinen toteutus.
 
-## Menetelmä v1.5.0
+## Menetelmä v1.6.1
 
 Kaikki pituudet ja etäisyydet lasketaan metreinä **ETRS-TM35FIN / EPSG:3067** -koordinaatistossa. Kuntarajan ulkopuoliset pituudet leikataan pois. Oletusetäisyys on **20 m ajoradan keskilinjasta**, muutettavissa `--distance 15` jne. Tämä on tutkimusparametri, ei OSM-standardin sääntö. Vertaa esimerkiksi 10 / 15 / 20 / 25 metrin ajoja erillisissä tuloshakemistoissa ennen johtopäätöksiä.
 
@@ -128,8 +150,11 @@ Kaikki pituudet ja etäisyydet lasketaan metreinä **ETRS-TM35FIN / EPSG:3067** 
 | Edellinen + `segregated=no` | Oma poissuljettujen yhdistettyjen väylien summa |
 | Edellinen, erottelutieto puuttuu tai muu arvo | Oma tuntemattoman erottelun summa, ei mukaan |
 | Suojatie (`footway=crossing`), `access_aisle`, aluegeometria, `access/foot=private/no` | Pois |
+| Jalankulku vain määränpäähän: `foot=destination` tai `access=destination` ilman ohittavaa `foot`-tägiä | Pois summasta ja rinnakkaisreittien estäjistä; säilyy lähtötasolla ja verkkokontekstissa |
 
 Ajotien luokat: primary, secondary, tertiary, unclassified, residential sekä primary/secondary/tertiary_link. Pihakadut (`living_street`), huoltotiet (`service`), ajourat, moottoritiet ja trunk-luokka eivät kuulu laskentaan. Living street säilytetään sijaintikontekstina, jotta sen footway ei tulisi mukaan toisen lähellä olevan tavallisen kadun kautta. **Ajoradan `foot=no` ei estä sen käyttämistä erillisen jalkakäytävän sijaintiviitteenä.** `access=no`-ajorata hyväksytään sijaintiviitteeksi, jos sillä on salliva kulkumuotokohtainen poikkeus esimerkiksi busseille, pyörille tai kiinteistölle ajoon. `access=private`-ajorata jää pois. Säännöt ovat tiedostossa `pipeline/rules.py`.
+
+`destination` tarkoittaa kulkua vain väylän varrella olevaan määränpäähän, ei tiettyä väylätyyppiä. Erillisellä jalankulkuväylällä se toimii tässä analyysissä poissulkuehtona. Tarkempi `foot`-tägi ohittaa yleisen `access`-arvon: esimerkiksi `access=destination` + `foot=yes/designated/permissive/official` säilyy muiden ehtojen tarkastelussa. `foot=destination` sulkee pois myös silloin, kun `access=yes`. `motor_vehicle=destination` ei rajoita jalankulkua, eikä ajoradan `access=destination` poista sen jalkakäytäviä. Lähtötason hylkäyssyy on `jalankulku_vain_maaranpaahan`. Perusta: [OSM destination](https://wiki.openstreetmap.org/wiki/Tag:access%3Ddestination) ja [access-tägien hierarkia](https://wiki.openstreetmap.org/wiki/Key:access).
 
 Jos käytössä on alkuperäinen 1.0-välimuisti, päivitä puuttuvat ajorataviitteet kerran komennolla `python -m scripts.extend_reference_roads`. Skripti tarkistaa alkuperäisen PBF:n SHA-256-summan ja lisää vanhan valinnan vuoksi puuttuneet ajoradat samasta otoksesta; koko välimuistia ei tarvitse rakentaa uudelleen. Aja tämän jälkeen `python -m scripts.extend_walking_candidates`, joka lisää footwayt, joiden jalankulkutarkoitus sisältyy jo highway-tägiin mutta jotka jäivät aiemmin pois puuttuvan erillisen foot-tägin vuoksi. `compute` tarkistaa välimuistin valintaversion (nyt 3).
 
@@ -147,11 +172,31 @@ Erillisten mukaan otettavien jalankulkuväylien pintojen sallittu lista on `asph
 
 Geometrioiden yhteisistä alkuperäisistä taitepisteistä muodostetaan jalankulkuverkko, tasotiedot erotellen. Koordinaatit yhdistetään millimetrin tarkkuudella; kyse on välimuistin geometrioista johdetusta verkosta. Yksittäisen OSM-wayn päissä seurataan haarautumattomia jatkoja myös seuraaviin wayhin.
 
-Vahva sisäverkkoepäily hylätään, kun katuun osuvan reitin toinen pää liittyy haarautuvaan polkuverkkoon yli 25 m etäisyydellä kadusta ja toinen pää jää umpinaiseksi kadun lähelle keskellä risteysväliä. Myös molemmista päistään etäämpään haarautuvaan sisäverkkoon liittyvä katuosuma hylätään. 25 m vastaa oletusetäisyyttä 20 m + sisäverkon marginaalia 5 m. Risteyksen tai kadun päätepisteen 25 m lähiympäristö suojaa hylkäykseltä. Pitkä, yli 250 m haarautumaton jatko ja sulkeutuvat ketjut säilytetään varovaisuusperiaatteella.
+Vahva sisäverkkoepäily hylätään, kun katuun osuvan reitin toinen pää liittyy haarautuvaan polkuverkkoon tai päättyy yli 25 m etäisyydellä kadusta ja toinen pää jää umpinaiseksi kadun lähelle keskellä risteysväliä. Myös molemmista päistään etäämpään sisäalueeseen liittyvä katuosuma hylätään. 25 m vastaa oletusetäisyyttä 20 m + sisäverkon marginaalia 5 m. Risteyksen tai kadun päätepisteen 25 m lähiympäristö suojaa tältä sisäverkkohylkäykseltä. Pitkä, yli 250 m haarautumaton jatko ja sulkeutuvat ketjut säilytetään varovaisuusperiaatteella.
+
+Toinen kokonaisreitin ehto tunnistaa haarautumattoman yhteyden, jonka molemmat päät liittyvät ajoradan solmuihin vähintään 55° kulmassa ja joka käy vähintään 6 m sivussa ajoradoista. Pelkkä läheisyys ei riitä: päiden on oltava yhteisiä ajoradan kanssa, eikä sisällä saa olla haarautumista. Jos molemmat seuratut päät ovat risteysten 25 m lähiympäristössä, reitti säilyy tämän ehdon osalta. Ehto toimii myös OSM-way-rajojen yli jatkavissa ketjuissa; hylkäyssyy on `ajoradalta_sivuun_ja_takaisin`. Esimerkit 133019393, 130751536 ja 1206626750 ovat todellisen paikallisen OSM-aineiston regressiotestissä. Rakennusgeometrioita ei vielä käytetä.
 
 Koko kytkeytynyttä komponenttia ei luokitella samalla tavalla. Kadunvarsireitistä tontille lähtevä sivuhaara ei itsessään hylkää pääreittiä. `hylkayssyy=sisaverkon_paattyva_katuosuma` tai `sisaverkon_lapi_kulkeva_katuosuma` näyttää hylkäysperusteen. Hautausmaan kohde 1144437799 on pysyvässä regressiotestissä. Tässä vaiheessa ei käytetä kiinteistörajoja, hautausmaapolygoneja tai uutta API-avainta. OSM-verkon puutteet voivat silti vaikuttaa tulkintaan.
 
+Lisäksi koko haarautumatonta jatkoa tarkastellaan enintään 250 m way-rajojen yli. Jos reitti käy yli 25 m päässä ajoradoista eikä siihen liity kadun 20 m lähiympäristössä toista jalankulkuväylää, sen kadun lähellä olevaa osaa ei irroteta mukaan. Myös reitin alkuperäisten taitepisteiden välit tarkistetaan 10 m näytteillä. Pelkkä ajoradan risteyksen läheisyys yhdessä päässä ei kumoa kokonaisreitin poikkeamista. Hylkäyssyy on `ajoradasta_poikkeava_kokonaisreitti`.
+
+Geometrisen tarkastelun jälkeen poistetaan myös irrallinen umpiperäinen haara, jonka ainoa jatko on jo hylätty reitti ja joka ei kohtaa ajoradan risteyksen 25 m lähiympäristöä. Aktiiviset wayt yhdistetään ensin haarautumattomista jatkokohdista, joten reitin jakaminen useaan wayhin ei mahdollista pätkien keskinäistä perustelua. Ehto koskee haaran päähän liittyvää hylättyä jatkoa: jatkuvan kadunvarsireitin sisäinen tonttihaara ei riitä. Eksplisiittisesti jalkakäytäväksi/sivuväyläksi merkitty tai erottelutiedon sisältävä jalankulun ja pyöräilyn reitti saa tässä ristiriitatilanteessa etusijan. Kohde 115094353 on pysyvässä regressiotestissä; hylkäyssyy on `irrallinen_haara_hylatysta_reitista`.
+
 ### Lähin saman kadunpuolen jalankulkuväylä
+
+Lähimmän samansuuntaisen ajoradan eksplisiittinen tieto jalkakäytävän puuttumisesta estää tavallisen footwayn päättelemisen jalkakäytäväksi kyseisellä puolella. Puolikohtainen `sidewalk:left/right` ohittaa `sidewalk:both`- ja yleisen `sidewalk`-arvon; myös `sidewalk=left/right` ilmaisee vastakkaisen puolen puuttumisen. Puuttuva tägi ei ole poissulkusyy. Poikkeuksena erillisen väylän `footway=sidewalk` tai `is_sidepath=yes` saa ristiriidassa etusijan; myös eroteltu pyöräväylä käsitellään sen omilla ehdoilla. Myös vähintään 90-prosenttisesti geometriaehdot täyttävä, todellisen ajoratojen haarautumisristeyksen 25 m lähiympäristöön jatkuva reitti saa etusijan: esimerkin 1201123081 kohdalla ajoradan tieto oli ristiriidassa käyttäjän varmistaman jalkakäytävän kanssa. Pelkkä ajoradan päätepiste ei riitä tähän poikkeukseen. Hylkäyssyy on `ajoradan_puolella_ei_jalkakaytavaa`. Kauempaa toista ajorataa ei käytetä tämän kiertämiseen. Ajoradan `sidewalk=no` ei poista fyysistä ajorataa sijaintiviitteistä.
+
+### Risteyslinkit ja jalkakäytävien päät
+
+Alle 40 m linkki voi alittaa 15 m vähimmäisjakson tai kaartaa enemmän, jos molemmat päät liittyvät eri hyväksyttyihin jalkakäytäväviivoihin yhteisissä OSM-solmuissa. Pelkkä läheisyys tai yhteys poissuljettuun yhdistettyyn väylään ei riitä. Linkin on käytävä risteyksen 25 m lähiympäristössä ja pysyttävä enintään 30 m päässä ajoradoista (normaaliraja + 10 m, katto 30 m). Pinta-, pääsy-, kokonaisreitti-, pihakatu- ja rinnakkaisuussäännöt säilyvät. Kohde 1201123082 on tällainen 13,757 m pitkä linkki; sitä ei aiemmin hyväksytty 15 m vähimmäispituuden vuoksi, vaikka se on alle 8 m päässä ajoradasta.
+
+Jo vähintään 70-prosenttisesti hyväksytyn `footway=sidewalk`- tai `is_sidepath=yes`-viivan korkeintaan 30 m pitkä pää voidaan täydentää, kun koko puuttuva pää on todellisen risteyksen 25 m lähiympäristössä ja ajoratojen etäisyysrajan sisällä. Kokonaisreitin suodatus on tehty tätä ennen, ja rinnakkaisuusehdot tarkistetaan täydennyksillekin. Kohteet 496915707 ja 58521570 ovat pysyvissä regressiotesteissä. Auditointi-GeoJSONin uusien osuuksien `junction_link=true` erottaa risteyspoikkeuksen normaalista hyväksynnästä; parametrit ovat tuloksen `corner_link_policy`-kentässä.
+
+Toisen pään tukena kelpaa myös yhteiseen alkuperäiseen OSM-solmuun liittyvä `footway=crossing` tai jalankulkuun tarkoitettu `cycleway=crossing`. Toinen pää vaatii edelleen hyväksytyn jalkakäytävän. Ylitys toimii katuverkon yhteyden osoituksena myös risteysten välisellä suojatiellä. Pelkkä läheisyys tai vapaa pää ilman ylitysyhteyttä ei riitä. Ylitysviivat ovat lähtötasolla luokkaa `crossing_context`, `hylkayssyy=ylitys_konteksti` ja `mukaan_m=0`. Varsinaisten viivojen pinta-, pääsy- ja etäisyysrajaukset säilyvät.
+
+Varmennetun risteys-/ylityslinkin kanssa yhteisen OSM-solmun jakava jalkakäytävä ei varjosta sen liittymäkaarretta kilpailevana rinnakkaisena pihaviivana. Muut lähempänä ajorataa olevat rinnakkaiset väylät voivat edelleen estää linkin. Esimerkit 1201123080 → 1201123079 ja 1228692226 → 1228692227 kattavat tämän; suojatieosuuksia ei lisätä summaan.
+
+### Lähempien reittien varjostus
 
 Jos ajoradan ja erillisen jalankulkuväyläehdokkaan välissä on jo toinen samansuuntainen jalankulkuväylä, kauemman viivan rinnakkainen osuus poistetaan. Este voi olla footway tai jalankululle osoitettu pyöräväylä; `foot=designated`-pyöräväylä estää kauemman footwayn myös erottelutiedon puuttuessa. Fyysisen sisemmän kulkureitin pinta- tai path-rajaus ei itsessään mahdollista sen takaisen kiinteistövaylän laskemista jalkakäytäväksi.
 
