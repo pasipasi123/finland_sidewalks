@@ -20,10 +20,11 @@ from shapely.strtree import STRtree
 from .rules import category, sidewalk_sides, candidate_category, tag_rejection, walking_surface
 from .corridor import filter_outer_paths,flat_lines,direction_runs
 from .network import WalkingNetwork,NETWORK_POLICY
+from .junctions import supported_corner_links,sidewalk_end_extensions,CORNER_POLICY
 
 TO_METRES = Transformer.from_crs(4326, 3067, always_xy=True).transform
 TO_LONLAT = Transformer.from_crs(3067, 4326, always_xy=True).transform
-VERSION = '1.5.0'
+VERSION = '1.6.1'
 FOOTWAY_GEOMETRY = {'max_distance_m':20, 'max_angle_degrees':20,
                     'min_run_m':15,'max_turn_degrees':45}
 
@@ -84,7 +85,7 @@ def prepare(args):
         Handler().apply_file(args.pbf, locations=True, idx='sparse_file_array,'+index)
         with open(args.pbf,'rb') as source:
             checksum = hashlib.file_digest(source,'sha256').hexdigest()
-        meta = {'osm_date':args.osm_date, 'source':Path(args.pbf).name, 'sha256':checksum, 'version':VERSION,'cache_selection_version':3}
+        meta = {'osm_date':args.osm_date, 'source':Path(args.pbf).name, 'sha256':checksum, 'version':VERSION,'cache_selection_version':4}
         db.execute('INSERT INTO metadata VALUES (?)',(json.dumps(meta),))
         db.commit()
         dump(args.boundaries, {'type':'FeatureCollection','features':boundaries})
@@ -133,6 +134,8 @@ def measure(boundary, ways, distance=20, progress=None, rejections=None, corrido
         progress(f'{len(roads):,} ajoradan osaa; erillisten väylien läheisyysvertailu alkaa')
     network=WalkingNetwork(ways,level,distance)
     paths = []
+    supports = []
+    confirmed_spines=set()
     candidates = []
     stats = Counter()
     audit = []
@@ -184,6 +187,8 @@ def measure(boundary, ways, distance=20, progress=None, rejections=None, corrido
                 rejections[str(oid)] = 'jyrkat_kaanteet_katkaisevat_jakson' if any(line.length>=FOOTWAY_GEOMETRY['min_run_m'] for line in flat_lines(merged)) else 'kadunvarsijakso_liian_lyhyt'
                 continue
             matched = [part for run in runs for part in pieces(run)]
+            if kind=='footway' and sum(part.length for part in matched)>=0.9*geom.length and any(network.distance(network.intersections,network.key(level(tags),p))<=25 for p in geom.coords):
+                confirmed_spines.add(oid)
         for part in matched:
             candidates.append((oid,tags,kind,part))
     living=[]
@@ -192,13 +197,16 @@ def measure(boundary, ways, distance=20, progress=None, rejections=None, corrido
             living.extend((oid,tags,part) for part in pieces(geom,25))
     if progress:
         progress(f'{len(candidates):,} ehdokasosaa; lähempien saman puolen jalankulkuväylien tarkistus alkaa')
-    kept,removed=filter_outer_paths(candidates,roads+living,distance,level,alignment,progress)
+    kept,removed=filter_outer_paths(candidates,roads+living,distance,level,alignment,progress,confirmed_ids=confirmed_spines)
+    isolated=network.isolated_rejections(ways,kept)
+    kept=[row for row in kept if row[0] not in isolated]
     blocked_ids={row['osm_id'] for row in removed}
     grouped={}
     for oid,tags,kind,part in kept:
         grouped.setdefault(oid,{'tags':tags,'kind':kind,'parts':[]})['parts'].append(part)
     for row in removed:
         rejections[str(row['osm_id'])]=row['reason']
+    rejections.update({str(oid):reason for oid,reason in isolated.items()})
     for oid,record in grouped.items():
         tags,kind,parts=record['tags'],record['kind'],record['parts']
         if kind.startswith('blocker_only'):
@@ -217,11 +225,37 @@ def measure(boundary, ways, distance=20, progress=None, rejections=None, corrido
                 stats['assumed_asphalt']+=clipped.length
             if kind in {'footway','segregated'}:
                 paths.append((part,tags))
+                supports.append((oid,tags,part))
             audit.append({'type':'Feature','properties':{'osm_id':oid,'category':kind,'length_m':round(clipped.length,3)},'geometry':mapping(transform(TO_LONLAT,clipped))})
         if counted:
             rejections.pop(str(oid),None)
         elif oid not in blocked_ids:
             rejections[str(oid)]='kunnan_ulkopuolella'
+    # A corner can be shorter or less parallel than a street-side run. It must
+    # connect an accepted sidewalk to another accepted sidewalk or a crossing.
+    links=supported_corner_links(ways,supports,network,distance)
+    links.extend(sidewalk_end_extensions(ways,supports,network,distance))
+    if links:
+        link_ids={oid for oid,_,_ in links}
+        junction_connections={(oid,bid) for oid,tags,geom in links for point in geom.coords
+                              for bid in network.walking_ids.get(network.key(level(tags),point),set()) if bid!=oid}
+        link_parts=[(oid,tags,'footway',part) for oid,tags,geom in links for part in pieces(geom)]
+        kept_links,removed_links=filter_outer_paths([row for row in candidates if row[0] not in link_ids]+link_parts,roads+living,min(distance+CORNER_POLICY['extra_distance_m'],CORNER_POLICY['max_distance_m']),level,alignment,only_ids=link_ids,confirmed_ids=confirmed_spines,junction_connections=junction_connections)
+        lengths=Counter()
+        for oid,_,_,part in kept_links:lengths[oid]+=part.length
+        expected=Counter()
+        for oid,_,geom in links:expected[oid]+=geom.length
+        whole={oid for oid in expected if abs(lengths[oid]-expected[oid])<0.01}
+        for oid,tags,_,part in kept_links:
+            if oid not in whole:continue
+            part=part.intersection(boundary)
+            if part.length<=1e-6:continue
+            stats['footway']+=part.length
+            if not walking_surface(tags):stats['assumed_asphalt']+=part.length
+            paths.append((part,tags))
+            audit.append({'type':'Feature','properties':{'osm_id':oid,'category':'footway','length_m':round(part.length,3),'junction_link':True},'geometry':mapping(transform(TO_LONLAT,part))})
+            rejections.pop(str(oid),None)
+        removed.extend(removed_links)
     if corridor_exclusions is not None:
         corridor_exclusions.extend(removed)
     # A separately mapped qualifying path takes precedence over the same road side.
@@ -262,9 +296,9 @@ def compute(args):
         db.close()
         raise ValueError('OSM-välimuistin valmistelu ei ole valmistunut. Tee prepare uuteen tiedostoon.')
     meta = json.loads(metadata_row[0])
-    if meta.get('cache_selection_version',1)<3:
+    if meta.get('cache_selection_version',1)<4:
         db.close()
-        raise ValueError('Vanha välimuistin valinta: aja scripts.extend_reference_roads ja scripts.extend_walking_candidates moduuleina tai valmistele uusi välimuisti.')
+        raise ValueError('Vanha välimuistin valinta: aja tarvittavat scripts.extend_reference_roads, scripts.extend_walking_candidates ja scripts.extend_crossing_context moduuleina tai valmistele uusi välimuisti.')
     selected = [f for f in features if codes is None or f['properties']['code'] in codes]
     if codes and codes - {f['properties']['code'] for f in selected}:
         raise ValueError('Kuntakoodia ei löydy raja-aineistosta.')
@@ -296,8 +330,10 @@ def compute(args):
         result['diagnostics'] = {'input_ways':len(ways), 'audit_features':len(audit), 'calculation_seconds':round(time.perf_counter()-started,3)}
         result['footway_geometry'] = FOOTWAY_GEOMETRY
         result['network_policy'] = NETWORK_POLICY
+        result['corner_link_policy'] = CORNER_POLICY
         result['surface_policy'] = {'missing':'assumed_asphalt','known_non_hard':'excluded'}
-        result['corridor_policy'] = {'innermost_walking_route_only':True,'side_order_tolerance_m':0.25,'living_street_included':False}
+        result['corridor_policy'] = {'innermost_walking_route_only':True,'side_order_tolerance_m':0.25,'living_street_included':False,
+                                     'road_sidewalk_no_blocks_inference':True,'explicit_sidepath_overrides_road_no':True}
         result['assumed_asphalt_km'] = round(stats['assumed_asphalt']/1000,6)
         result['diagnostics']['rejected_way_counts'] = dict(Counter(rejections.values()))
         exclusion_info={}

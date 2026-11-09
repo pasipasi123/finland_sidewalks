@@ -22,6 +22,12 @@ def sidewalk_sides(tags):
     both = tags.get('sidewalk:both')
     return tuple(tags.get('sidewalk:'+side, both if both is not None else ('yes' if default else 'no')) == 'yes' for side, default in zip(('left','right'), defaults))
 
+def sidewalk_absent(tags,side):
+    """An explicit absence for this side; missing information is not absence."""
+    value=tags.get('sidewalk:'+side,tags.get('sidewalk:both',tags.get('sidewalk')))
+    if value in {'left','right'}:return value!=side
+    return value in {'no','none'}
+
 def candidate_category(tags):
     """Broad candidate cache, with physical street references separate from foot access."""
     if tags.get('highway')=='living_street' and public(tags):
@@ -31,6 +37,8 @@ def candidate_category(tags):
     if not public(tags):
         return None
     highway = tags.get('highway')
+    if highway in {'footway','cycleway','path'} and (tags.get('footway')=='crossing' or tags.get('cycleway')=='crossing') and (highway=='footway' or tags.get('foot')=='designated'):
+        return 'crossing_context'
     if highway not in {'footway', 'cycleway', 'path'} or tags.get('footway') in {'crossing', 'access_aisle'}:
         return None
     cycling = highway == 'cycleway' or tags.get('bicycle') == 'designated'
@@ -53,6 +61,13 @@ def tag_rejection(tags):
         return 'tagisaanto'
     if kind == 'road':
         return None
+    if kind == 'crossing_context':
+        return 'ylitys_konteksti'
+    # A mode-specific foot tag overrides the general access restriction.
+    # Keep these ways in the broad cache/network context, but not in metrics
+    # or as street-side blockers. Motor-vehicle restrictions do not apply here.
+    if tags.get('foot', tags.get('access')) == 'destination':
+        return 'jalankulku_vain_maaranpaahan'
     if tags.get('highway') == 'path':
         return 'highway_path'
     if tags.get('footway') == 'traffic_island':

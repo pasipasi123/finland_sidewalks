@@ -3,6 +3,7 @@ import math
 from shapely import union_all
 from shapely.geometry import LineString, Polygon
 from shapely.strtree import STRtree
+from .rules import sidewalk_absent
 
 def direction_runs(line,max_turn_degrees=45):
     """Split connected lines at sharp turns; connectivity alone is not continuity."""
@@ -35,7 +36,7 @@ def flat_lines(geom):
         for member in geom.geoms:
             yield from flat_lines(member)
 
-def filter_outer_paths(candidates,roads,distance,level,alignment,progress=None):
+def filter_outer_paths(candidates,roads,distance,level,alignment,progress=None,only_ids=None,confirmed_ids=(),junction_connections=()):
     """Return kept pieces and exact shadow intersections, without extending end caps.
 
     roads includes living_street references solely to reject their adjacent paths.
@@ -50,6 +51,7 @@ def filter_outer_paths(candidates,roads,distance,level,alignment,progress=None):
     tolerance=.25  # metres: don't decide street-side order from coordinate noise.
     cos30=math.cos(math.radians(30))
     for number,(oid,tags,kind,part) in enumerate(records,1):
+        if only_ids is not None and oid not in only_ids:continue
         if progress and number%20000==0:
             progress(f'Lähimmän kadunvarsiväylän vertailu {number:,}/{len(records):,}')
         if kind not in {'footway','segregated'}:
@@ -71,6 +73,10 @@ def filter_outer_paths(candidates,roads,distance,level,alignment,progress=None):
         norm=math.hypot(dx,dy)
         ux,uy=dx/norm,dy/norm
         signed=ux*(mid.y-y)-uy*(mid.x-x)
+        side='left' if signed>0 else 'right'
+        if kind=='footway' and oid not in confirmed_ids and abs(signed)>tolerance and sidewalk_absent(road_tags,side) and tags.get('footway')!='sidewalk' and tags.get('is_sidepath')!='yes':
+            removed.append({'osm_id':oid,'category':kind,'reason':'ajoradan_puolella_ei_jalkakaytavaa','road_id':road_id,'blockers':[],'geometry':part})
+            continue
         if abs(signed)<=tolerance:
             kept.append((oid,tags,kind,part))
             continue
@@ -82,6 +88,9 @@ def filter_outer_paths(candidates,roads,distance,level,alignment,progress=None):
             bid,btags,bkind,blocker=records[int(index)]
             if bid==oid or level(btags)!=level(tags) or alignment(part,blocker)<cos30:
                 continue
+            # A verified intersection link joins this sidewalk at a real OSM
+            # node. Its curving approach is not a competing outer parallel way.
+            if (oid,bid) in junction_connections:continue
             coords=list(blocker.coords)
             # Only same-side, genuinely closer route fragments can cast a shadow.
             lateral=[sign*(ux*(py-y)-uy*(px-x)) for px,py in (coords[0],coords[-1])]

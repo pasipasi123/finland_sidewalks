@@ -192,6 +192,7 @@ def export_gpkg(result_path, audit_path, cache_path, output_path):
             'osm_lisenssi':'© OpenStreetMap contributors · ODbL · https://www.openstreetmap.org/copyright',
             'tarkistustila':'Pintatietoon ja geometriaan perustuva rajaus; käyttäjän ensimmäinen karttatarkistus huomioitu. Ei maastovarmennettu.',
             'hylkayssyy':'Lähtöväylän poissulun syy. Puuttuva footway=sidewalk tai pinta ei ole poissulkusyy.',
+            'ajoradan_sidewalk_no':'Lähimmän saman suuntaisen ajoradan sidewalk=no tai puolikohtainen puuttumistieto estää tavallisen footwayn geometrisen hyväksynnän. Erillisen viivan footway=sidewalk tai is_sidepath=yes ohittaa ristiriidan. Ajorata säilyy sijaintiviitteenä.',
             'pinnan_tila':'osm_tieto = pinta tulee OSM:stä. oletus_asfaltti = pintatieto puuttuu ja laskennassa oletetaan asfaltti. Alkuperäisiä surface-tägejä ei muuteta.',
             'rinnakkaiset_vaylat':'Lähimmän saman kadunpuolen kulkukelpoisen jalankulkuväylän takaiset rinnakkaiset osuudet poistetaan. varjossa_m on suoraan poistetun geometrian pituus; lyhyet jäljelle jäävät footway-jaksot voivat poistua lisäksi 15 m säännöllä. estaja_osm ja viitekatu_osm kertovat OSM-tunnisteet.',
         }

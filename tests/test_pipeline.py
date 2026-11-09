@@ -19,6 +19,14 @@ def way(oid, coords, **tags):
     return oid,tags,LineString(coords)
 
 class Rules(unittest.TestCase):
+    def test_destination_access_respects_walking_override(self):
+        self.assertEqual(tag_rejection({'highway':'footway','access':'destination'}),'jalankulku_vain_maaranpaahan')
+        self.assertEqual(tag_rejection({'highway':'footway','foot':'destination','access':'yes'}),'jalankulku_vain_maaranpaahan')
+        for foot in ['yes','designated','permissive','official']:
+            self.assertEqual(category({'highway':'footway','access':'destination','foot':foot}),'footway')
+        self.assertEqual(category({'highway':'footway','motor_vehicle':'destination'}),'footway')
+        self.assertEqual(category({'highway':'residential','access':'destination','sidewalk':'both'}),'road')
+
     def test_sides_and_overrides(self):
         self.assertEqual(sidewalk_sides({'sidewalk':'both','sidewalk:left':'separate'}),(False,True))
         self.assertEqual(sidewalk_sides({'sidewalk':'left'}),(True,False))
@@ -48,6 +56,136 @@ class Rules(unittest.TestCase):
         self.assertEqual(category({'highway':'footway','surface':'paving_stones','lit':'yes'}),'footway')
 
 class Geometry(unittest.TestCase):
+    def test_reported_short_corner_link_between_real_sidewalks(self):
+        f=json.loads((Path(__file__).parent/'fixtures/oulu_corner_link.json').read_text(encoding='utf-8'))
+        ways=[(w['id'],w['tags'],transform(TO_METRES,shape(w['geometry']))) for w in f['ways']]
+        _,audit=measure(transform(TO_METRES,shape(f['boundary'])),ways)
+        length=sum(row['properties']['length_m'] for row in audit if row['properties']['osm_id']==1201123082)
+        self.assertAlmostEqual(length,13.757,delta=0.003)
+
+    def test_reported_sidewalk_junction_ends_are_complete(self):
+        f=json.loads((Path(__file__).parent/'fixtures/oulu_sidewalk_ends.json').read_text(encoding='utf-8'))
+        ways=[(w['id'],w['tags'],transform(TO_METRES,shape(w['geometry']))) for w in f['ways']]
+        _,audit=measure(transform(TO_METRES,shape(f['boundary'])),ways)
+        for oid in [496915707,58521570,1201123080,1228692226]:
+            raw=next(geom.length for i,tags,geom in ways if i==oid)
+            counted=sum(row['properties']['length_m'] for row in audit if row['properties']['osm_id']==oid)
+            self.assertAlmostEqual(counted,raw,delta=0.02)
+
+    def test_crossing_can_anchor_short_link_also_between_road_junctions(self):
+        for intersection,expected in [(True,7.729),(False,7.729)]:
+            ways=[way(1,[(0,0),(100,0),(200,0)],highway='residential'),
+                  way(2,[(20,8),(95,8)],highway='footway'),
+                  way(3,[(95,8),(99,9),(101,12)],highway='footway'),
+                  way(5,[(101,12),(110,12)],highway='footway',footway='crossing')]
+            if intersection:ways.append(way(4,[(100,0),(100,100)],highway='residential'))
+            _,audit=measure(box(-20,-20,220,120),ways)
+            length=sum(row['properties']['length_m'] for row in audit if row['properties']['osm_id']==3)
+            self.assertAlmostEqual(length,expected,delta=.002)
+            self.assertNotIn(5,{row['properties']['osm_id'] for row in audit})
+
+    def test_crossing_proximity_without_shared_node_does_not_support_link(self):
+        ways=[way(1,[(0,0),(100,0),(200,0)],highway='residential'),
+              way(2,[(100,0),(100,100)],highway='residential'),
+              way(3,[(20,8),(95,8)],highway='footway'),
+              way(4,[(95,8),(99,9),(101,12)],highway='footway',footway='sidewalk'),
+              way(5,[(101.1,12),(110,12)],highway='footway',footway='crossing')]
+        _,audit=measure(box(-20,-20,220,120),ways)
+        self.assertNotIn(4,{row['properties']['osm_id'] for row in audit})
+
+    def test_unlabelled_one_ended_corner_spur_has_no_short_stub_exception(self):
+        ways=[way(1,[(0,0),(100,0),(200,0)],highway='residential'),
+              way(2,[(100,0),(100,100)],highway='residential'),
+              way(3,[(20,8),(95,8)],highway='footway'),
+              way(4,[(95,8),(99,9),(101,12)],highway='footway')]
+        _,audit=measure(box(-20,-20,220,120),ways)
+        self.assertNotIn(4,{row['properties']['osm_id'] for row in audit})
+
+    def test_reported_isolated_estate_branch(self):
+        f=json.loads((Path(__file__).parent/'fixtures/oulu_isolated_estate_branch.json').read_text(encoding='utf-8'))
+        ways=[(w['id'],w['tags'],transform(TO_METRES,shape(w['geometry']))) for w in f['ways']]
+        rejected={};_,audit=measure(transform(TO_METRES,shape(f['boundary'])),ways,rejections=rejected)
+        self.assertNotIn(115094353,{row['properties']['osm_id'] for row in audit})
+        self.assertEqual(rejected['115094353'],'irrallinen_haara_hylatysta_reitista')
+
+    def test_isolated_estate_branch_cannot_support_itself_via_way_splitting(self):
+        ways=[way(1,[(0,0),(300,0)],highway='residential'),
+              way(2,[(100,0),(100,10),(100,50)],highway='footway'),
+              way(3,[(100,10),(130,10)],highway='footway'),way(4,[(130,10),(170,10)],highway='footway')]
+        rejected={};stats,_=measure(box(-10,-10,310,100),ways,rejections=rejected)
+        self.assertEqual(stats['footway'],0)
+        for oid in [3,4]:self.assertEqual(rejected[str(oid)],'irrallinen_haara_hylatysta_reitista')
+
+    def test_excursion_sampling_checks_between_original_vertices(self):
+        ways=[way(1,[(-100,0),(0,0),(0,60),(100,60),(100,0),(200,0)],highway='residential'),
+              way(2,[(0,8),(100,8)],highway='footway')]
+        rejected={};stats,_=measure(box(-150,-50,250,100),ways,rejections=rejected)
+        self.assertEqual(stats['footway'],0)
+        self.assertEqual(rejected['2'],'ajoradasta_poikkeava_kokonaisreitti')
+
+    def test_sidewalk_no_blocks_inference_without_using_a_farther_road(self):
+        ways=[way(1,[(0,0),(100,0)],highway='residential',sidewalk='no'),
+              way(2,[(0,18),(100,18)],highway='residential'),
+              way(3,[(0,5),(100,5)],highway='footway')]
+        rejected={};stats,_=measure(box(-20,-30,120,50),ways,rejections=rejected)
+        self.assertEqual(stats['footway'],0)
+        self.assertEqual(rejected['3'],'ajoradan_puolella_ei_jalkakaytavaa')
+
+    def test_sidewalk_no_honors_side_specific_override(self):
+        ways=[way(1,[(0,0),(100,0)],**{'highway':'residential','sidewalk':'no','sidewalk:left':'separate'}),
+              way(2,[(0,8),(100,8)],highway='footway'),way(3,[(0,-8),(100,-8)],highway='footway')]
+        stats,audit=measure(box(-20,-30,120,30),ways)
+        self.assertAlmostEqual(stats['footway'],100)
+        self.assertEqual({f['properties']['osm_id'] for f in audit},{2})
+
+    def test_explicit_sidewalk_is_stronger_than_conflicting_road_no(self):
+        for explicit in [{'footway':'sidewalk'},{'is_sidepath':'yes'}]:
+            ways=[way(1,[(0,0),(100,0)],highway='residential',sidewalk='no'),
+                  way(2,[(0,8),(100,8)],highway='footway',**explicit)]
+            stats,_=measure(box(-20,-30,120,30),ways)
+            self.assertAlmostEqual(stats['footway'],100)
+
+    def test_reported_estate_detours(self):
+        f=json.loads((Path(__file__).parent/'fixtures/oulu_estate_detours.json').read_text(encoding='utf-8'))
+        ways=[(w['id'],w['tags'],transform(TO_METRES,shape(w['geometry']))) for w in f['ways']]
+        rejected={};_,audit=measure(transform(TO_METRES,shape(f['boundary'])),ways,rejections=rejected)
+        included={row['properties']['osm_id'] for row in audit}
+        for oid in [133019393,130751536,1206626750]:self.assertNotIn(oid,included)
+        self.assertEqual(rejected['133019393'],'ajoradalta_sivuun_ja_takaisin')
+        self.assertEqual(rejected['130751536'],'ajoradalta_sivuun_ja_takaisin')
+        self.assertEqual(rejected['1206626750'],'sisaverkon_paattyva_katuosuma')
+
+    def test_estate_detour_across_way_ids(self):
+        ways=[way(1,[(-100,0),(0,0),(100,0),(300,0)],highway='residential'),
+              way(2,[(0,0),(0,14)],highway='footway'),
+              way(3,[(0,14),(100,14)],highway='footway'),
+              way(4,[(100,14),(100,0)],highway='footway')]
+        stats,_=measure(box(-150,-50,350,100),ways)
+        self.assertEqual(stats['footway'],0)
+
+    def test_real_sidewalk_between_junctions_keeps_road_connections(self):
+        ways=[way(1,[(-100,0),(0,0),(100,0),(300,0)],highway='residential'),
+              way(2,[(0,-50),(0,0),(0,50)],highway='residential'),
+              way(3,[(100,-50),(100,0),(100,50)],highway='residential'),
+              way(4,[(0,0),(0,14),(100,14),(100,0)],highway='footway')]
+        stats,_=measure(box(-150,-100,350,100),ways)
+        self.assertGreaterEqual(stats['footway'],100)
+
+    def test_interior_dead_end_cannot_donate_a_street_side_fragment(self):
+        ways=[way(1,[(0,0),(300,0)],highway='residential'),
+              way(2,[(100,50),(100,10),(170,10)],highway='footway')]
+        stats,_=measure(box(-10,-10,310,100),ways)
+        self.assertEqual(stats['footway'],0)
+
+    def test_destination_path_is_not_counted_or_a_blocker(self):
+        ways=[way(1,[(0,0),(100,0)],highway='residential'),
+              way(970197335,[(0,5),(100,5)],highway='footway',access='destination'),
+              way(3,[(0,10),(100,10)],highway='footway')]
+        rejected={};stats,audit=measure(box(-10,-10,110,30),ways,rejections=rejected)
+        self.assertAlmostEqual(stats['footway'],100)
+        self.assertEqual(rejected['970197335'],'jalankulku_vain_maaranpaahan')
+        self.assertEqual({f['properties']['osm_id'] for f in audit},{3})
+
     def test_reported_cemetery_network_spur(self):
         f=json.loads((Path(__file__).parent/'fixtures/oulu_cemetery_network.json').read_text(encoding='utf-8'))
         ways=[(w['id'],w['tags'],transform(TO_METRES,shape(w['geometry']))) for w in f['ways']]
@@ -65,10 +203,26 @@ class Geometry(unittest.TestCase):
         stats,_=measure(box(-50,-50,250,150),ways)
         self.assertAlmostEqual(stats['footway'],140)
 
-    def test_street_endpoint_protects_legitimate_connection(self):
+    def test_street_endpoint_alone_does_not_rescue_estate_route(self):
         ways=[way(1,[(0,0),(130,0)],highway='residential'),way(2,[(60,45),(60,8),(130,8)],highway='footway'),way(3,[(30,45),(60,45),(90,45)],highway='footway')]
         stats,_=measure(box(-50,-50,250,150),ways)
-        self.assertAlmostEqual(stats['footway'],70)
+        self.assertEqual(stats['footway'],0)
+
+    def test_deep_excursion_rejects_whole_route_across_way_boundaries(self):
+        ways=[way(1,[(-100,0),(300,0)],highway='residential'),
+              way(2,[(60,10),(100,10),(100,50)],highway='footway'),
+              way(3,[(100,50),(160,50),(160,10)],highway='footway'),
+              way(4,[(160,10),(220,10)],highway='footway')]
+        rejected={};stats,_=measure(box(-150,-50,350,100),ways,rejections=rejected)
+        self.assertEqual(stats['footway'],0)
+        for oid in [2,3,4]:self.assertEqual(rejected[str(oid)],'ajoradasta_poikkeava_kokonaisreitti')
+
+    def test_walking_junction_separates_street_spine_from_estate_access(self):
+        ways=[way(1,[(-100,0),(300,0)],highway='residential'),
+              way(2,[(30,10),(100,10),(200,10)],highway='footway'),
+              way(3,[(100,10),(100,50)],highway='footway')]
+        stats,_=measure(box(-150,-50,350,100),ways)
+        self.assertAlmostEqual(stats['footway'],170)
 
     def test_reported_zigzag_property_path(self):
         fixture=json.loads((Path(__file__).parent/'fixtures/oulu_zigzag_case.json').read_text(encoding='utf-8'))
@@ -192,10 +346,10 @@ class Geometry(unittest.TestCase):
         self.assertAlmostEqual(stats['shared'],100)
         self.assertEqual(stats['segregated']+stats['footway']+stats['tagged'],0)
 
-    def test_only_nearby_part_of_path_is_counted(self):
+    def test_nearby_fragment_of_deep_estate_route_is_rejected(self):
         ways=[way(1,[(0,0),(100,0)],highway='residential'),way(2,[(0,10),(50,10),(50,50),(100,50)],highway='footway')]
         stats,_=measure(box(-100,-100,200,200),ways)
-        self.assertAlmostEqual(stats['footway'],50)
+        self.assertEqual(stats['footway'],0)
 
     def test_short_property_spur_is_excluded(self):
         ways=[way(1,[(0,0),(100,0)],highway='residential'),way(2,[(30,8),(38,8)],highway='footway')]
