@@ -2,14 +2,20 @@
 
 Suomen kuntien **kadunvarsien jalkakäytävät kilometreinä ja metreinä asukasta kohti**. Python-laskenta käyttää paikallista OSM-PBF:ää ja kuntakohtaista SQLite-välimuistia. Tulokset viedään GeoPackageen karttatarkistusta varten ja valmiiksi JSON-aineistoksi erillistä käyttöliittymää varten. Overpassia tai tietokantapalvelinta ei tarvita.
 
-**Nykytila 9.11.2026:** menetelmä **1.6.1**, kaksi kuntaa laskettu samalla OSM-otoksella ja samoilla säännöillä. Väestön viitepäivä on molemmissa 31.12.2025.
+**Nykytila 11.11.2026:** menetelmä **1.6.4**, kuusi kuntaa laskettu samalla OSM-otoksella ja samoilla säännöillä. Väestön viitepäivä on kaikissa 31.12.2025.
 
-| Kunta | Jalkakäytävät, km | m/asukas | Raportti |
-| --- | ---: | ---: | --- |
-| Oulu | 82,862 | 0,3810 | [Oulu 1.6.1](reports/oulu-v1.6.1.md) |
-| Tampere | 331,497 | 1,2588 | [Tampere 1.6.1](reports/tampere-v1.6.1.md) |
+| Kunta | Jalkakäytävät, km | m/asukas |
+| --- | ---: | ---: |
+| Helsinki | 1 188,606 | 1,7117 |
+| Espoo | 265,929 | 0,8164 |
+| Tampere | 336,610 | 1,2782 |
+| Vantaa | 174,536 | 0,6900 |
+| Oulu | 84,556 | 0,3888 |
+| Turku | 366,711 | 1,7493 |
 
-Kokonaisreitin rakenne, määränpäärajoitus ja ajoradan sidewalk-tieto karsivat pihareittien katuosumia. Lyhyet linkit voivat saada tukea hyväksytyistä jalkakäytävistä ja ylityksistä; itse ylityspituuksia ei lasketa. Living street -varret on rajattu pois, ja puuttuva pinta oletetaan asfaltiksi. Välimuistissa on 709 996 väylää ja 308 kuntarajaa. Oulussa tehtyjen karttatarkistusten säännöt on nyt siirretty Tampereelle ensimmäistä tarkastelua varten. Luvut koskevat koko kuntia, eivät keskustoja.
+[Lähteet, laskentaluokat ja katseluaineistot: kuuden kaupungin raportti](reports/six-cities-v1.6.4.md).
+
+Kokonaisreitin rakenne, määränpäärajoitus ja ajoradan sidewalk-tieto karsivat pihareittien katuosumia. Lyhyet linkit voivat saada tukea hyväksytyistä jalkakäytävistä ja ylityksistä; itse ylityspituuksia ei lasketa. Living street -varret on rajattu pois, ja puuttuva pinta oletetaan asfaltiksi. Välimuistissa on 710 038 väylää, 308 kuntarajaa ja erillisenä kontekstina 4 933 laiturialuetta. Tampereen tarkistukset korjasivat bussikatujen valintaa, risteyskaarreaukkoja ja laiturille päättyvien footwayiden aiheuttamaa varsinaisen jalkakäytävän varjostusta. Luvut koskevat koko kuntia, eivät keskustoja.
 
 ## Laskennan käyttöönotto Windowsissa
 
@@ -61,6 +67,22 @@ Menetelmästä 1.6.1 alkaen ylitysviivat säilytetään yhteystietona (`crossing
 ```
 
 Laajennus tarkistaa PBF:n SHA256-summan, lukee vain ylitysten tarvitsemat solmut muistiin ja päivittää valintaversion neloseen. Uusi `prepare` sisältää tämän suoraan. Aiemmat valintaversiot tarvitsevat ensin myös `scripts.extend_reference_roads`- ja `scripts.extend_walking_candidates`-laajennukset tai uuden valmistelun.
+
+Menetelmä 1.6.2 korjaa myös `access=no` + `bus=yes` -ajoradat. Päivitä valintaversio 4 versioon 5 samalla alkuperäisellä PBF:llä:
+
+```powershell
+./.venv/Scripts/python.exe -m scripts.extend_bus_references
+```
+
+Tämä lisäsi nykyiseen koko Suomen otokseen 42 puuttuvaa fyysistä ajorataviitettä. Tavallisten tie- ja katuluokkien valikoima säilyy samana; bussiliikenteen salliva poikkeus estää väärän poissulun. Uusi `prepare` tekee myös tämän suoraan.
+
+Menetelmä 1.6.3 tarvitsee lisäksi suljettuina OSM-wayhinä kartoitetut laiturialueet. Päivitä valintaversio 5 versioon 6:
+
+```powershell
+./.venv/Scripts/python.exe -m scripts.extend_platform_context
+```
+
+Samasta PBF:stä löytyi 4 933 kelvollista laituripolygonia. Ne tallentuvat erillisiin `platforms`- ja `platform_bounds`-tauluihin; alkuperäisten footwayiden tägejä ei muuteta. Uusi `prepare` sisältää myös tämän. Pelkkiä pysäkkipisteitä tai avoimia laituriviivoja ei tulkita laiturialueeksi.
 
 ### 3. Lisää oikea väestöaineisto
 
@@ -133,7 +155,7 @@ Päivitys säilyttää tiedoston identiteetin, tasojen nimet, nykyiset tyylitaul
 
 `publish` tässä tarkoittaa paikallisen käyttöliittymäaineiston muodostamista; se ei siirrä mitään verkkoon. Varsinainen web-käyttöliittymä on erillinen toteutus.
 
-## Menetelmä v1.6.1
+## Menetelmä v1.6.4
 
 Kaikki pituudet ja etäisyydet lasketaan metreinä **ETRS-TM35FIN / EPSG:3067** -koordinaatistossa. Kuntarajan ulkopuoliset pituudet leikataan pois. Oletusetäisyys on **20 m ajoradan keskilinjasta**, muutettavissa `--distance 15` jne. Tämä on tutkimusparametri, ei OSM-standardin sääntö. Vertaa esimerkiksi 10 / 15 / 20 / 25 metrin ajoja erillisissä tuloshakemistoissa ennen johtopäätöksiä.
 
@@ -195,6 +217,20 @@ Jo vähintään 70-prosenttisesti hyväksytyn `footway=sidewalk`- tai `is_sidepa
 Toisen pään tukena kelpaa myös yhteiseen alkuperäiseen OSM-solmuun liittyvä `footway=crossing` tai jalankulkuun tarkoitettu `cycleway=crossing`. Toinen pää vaatii edelleen hyväksytyn jalkakäytävän. Ylitys toimii katuverkon yhteyden osoituksena myös risteysten välisellä suojatiellä. Pelkkä läheisyys tai vapaa pää ilman ylitysyhteyttä ei riitä. Ylitysviivat ovat lähtötasolla luokkaa `crossing_context`, `hylkayssyy=ylitys_konteksti` ja `mukaan_m=0`. Varsinaisten viivojen pinta-, pääsy- ja etäisyysrajaukset säilyvät.
 
 Varmennetun risteys-/ylityslinkin kanssa yhteisen OSM-solmun jakava jalkakäytävä ei varjosta sen liittymäkaarretta kilpailevana rinnakkaisena pihaviivana. Muut lähempänä ajorataa olevat rinnakkaiset väylät voivat edelleen estää linkin. Esimerkit 1201123080 → 1201123079 ja 1228692226 → 1228692227 kattavat tämän; suojatieosuuksia ei lisätä summaan.
+
+Puuttuva kaarre voi olla myös pitkän OSM-wayn keskellä tai jatkua useaan lyhyeen wayhin. Hyväksytyt osuudet katkaisevat puuttuvien osuuksien verkon myös saman wayn sisältä. Tukemattomat umpihaarat karsitaan, ja enintään 40 m puuttuva ketju voidaan täydentää, jos se yhdistää kaksi hyväksyttyä kohtaa tai hyväksytyn kohdan ylitykseen. Ketjun pitää pysyä ajoratojen etäisyysrajassa, eikä se saa muodostaa epäselvää silmukkaa. Ilman ylitystä vaaditaan risteyksen läheisyys tai alkuperäinen yhteinen solmu ajoradan kanssa. Pinta-, pääsy- ja kokonaisreittihylkäykset tehdään ennen täydentämistä. Päällekkäiset täydennykset yhdistetään alkuperäisen viivan pituussijainnin mukaan kaksoislaskennan välttämiseksi.
+
+Versiossa 1.6.4 kaksi eri hyväksyttyä kohtaa voivat tukea lyhyttä sivusiirtymäketjua myös ilman risteystä tai yhteistä ajoratasolmua. Tällöin koko puuttuvan ketjun on pysyttävä tavallisessa kadunvarsikäytävässä: etäisyys enintään `min(--distance,20 m)`. Risteyksen 10 m lisäetäisyyttä ei myönnetä pelkän kytkeytyneisyyden perusteella. 40 m enimmäispituus, yhteiset verkon solmut, kaksi erillistä tukikohtaa, umpihaarojen karsinta, pinta- ja pääsysäännöt sekä kokonaisreitin ja rinnakkaisuuden tarkistus säilyvät. Näsinlinnankadun 197195792 kattaa tämän regressiotestissä.
+
+Tampereen 42274329 ja 88200539 kattavat sisäisen kaarteen ja useaan wayhin jaetun ketjun. `hylkayssyy=osittain_poissuljettu` kertoo nyt myös yleisesti, kun kunnan sisäisestä footwaystä tai erotellusta väylästä jää yli 0,1 m pois eikä tarkempaa hylkäyssyytä ole. Hyväksytty osa ei siten enää peitä muuta poisjääntiä NULL-arvolla. Tämä ei muuta laskentaa, vaan tekee lähdetasosta paremman tarkistuksessa.
+
+### Pysäkkilaituriin päättyvät yhteydet
+
+Lyhyt, enintään 100 m pitkä tavallinen footway voidaan tunnistaa laiturille johtavaksi yhteydeksi, kun sen umpinaisessa päässä ei ole muuta jalankulkujatkoa ja pää osuu kartoitetun laiturialueen sisään tai enintään 0,25 m päähän sen reunasta. Toisen pään pitää olla vähintään 3 m laiturialueen ulkopuolella tai vähintään 80 % reitistä alueella. Tasotietojen on vastattava toisiaan. `footway=sidewalk` ja `is_sidepath=yes` suojaavat varsinaisen jalkakäytävän tältä tulkinnalta; laiturin ohi jatkuva reitti ei ole umpiyhteys.
+
+Laituriyhteys ei lisää jalkakäytäväpituutta eikä varjosta varsinaista jalkakäytävää. Sitä ei myöskään käytetä kaarretäydennysten tukena. Lähdetasolla `hylkayssyy=pysakkilaiturin_yhteys` ja `pysakkilaituri_osm` kertovat tulkinnan ja laiturin OSM-way-tunnisteen. Tunnistus käyttää aluegeometriaa ja verkon päättymistä, ei pelkkää pysäkin läheisyyttä. Tämä korjaa Tampereen Tuulensuun molemmat puolet, joilla laiturille päättyvä noin 42 m viiva oli aiemmin peittänyt ulomman jalkakäytävän.
+
+Laskenta kirjoittaa myös `data/results/564.platforms.geojson`- ja `837.platforms.geojson`-tiedostot alueiden visuaalista tarkistamista varten. Ne voi avata QGISissä GeoPackagen rinnalle. Laiturialueet ovat alkuperäisiä OSM-geometrioita kunnan analyysin rajauslaatikosta.
 
 ### Lähempien reittien varjostus
 
