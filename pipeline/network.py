@@ -41,7 +41,7 @@ class WalkingNetwork:
         self.street_graph=street_graph
         self.cache={}
 
-    def isolated_rejections(self,ways,kept):
+    def isolated_rejections(self,ways,kept,ignored_continuations=()):
         """Reject a dangling candidate whose only continuation was rejected.
 
         Join active ways through degree-two nodes first, so OSM way splitting
@@ -76,7 +76,7 @@ class WalkingNetwork:
             if not any(len(self.walk[key])==1 for key in ends):continue
             if any(self.distance(self.junctions,key)<=NETWORK_POLICY['junction_tolerance_m'] for key in graph):continue
             for key in ends:
-                others=self.walking_ids[key]-ids
+                others=self.walking_ids[key]-ids-set(ignored_continuations)
                 if others and not (others & active):
                     rejected.update({oid:'irrallinen_haara_hylatysta_reitista' for oid in ids})
                     break

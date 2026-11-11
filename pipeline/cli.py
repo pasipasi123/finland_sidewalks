@@ -20,11 +20,12 @@ from shapely.strtree import STRtree
 from .rules import category, sidewalk_sides, candidate_category, tag_rejection, walking_surface
 from .corridor import filter_outer_paths,flat_lines,direction_runs
 from .network import WalkingNetwork,NETWORK_POLICY
-from .junctions import supported_corner_links,sidewalk_end_extensions,CORNER_POLICY
+from .junctions import supported_corner_links,sidewalk_end_extensions,supported_missing_chains,merge_link_intervals,CORNER_POLICY
+from .platforms import PLATFORM_SCHEMA,PLATFORM_POLICY,platform_polygon,platform_access_ways
 
 TO_METRES = Transformer.from_crs(4326, 3067, always_xy=True).transform
 TO_LONLAT = Transformer.from_crs(3067, 4326, always_xy=True).transform
-VERSION = '1.6.1'
+VERSION = '1.6.4'
 FOOTWAY_GEOMETRY = {'max_distance_m':20, 'max_angle_degrees':20,
                     'min_run_m':15,'max_turn_degrees':45}
 
@@ -45,6 +46,7 @@ def prepare(args):
         raise ValueError('Välimuisti on jo olemassa. Käytä uutta tiedostonimeä uudelle OSM-otokselle.')
     db = sqlite3.connect(target)
     db.executescript('CREATE TABLE ways(id INTEGER PRIMARY KEY,tags TEXT,geom BLOB); CREATE VIRTUAL TABLE bounds USING rtree(id,minx,maxx,miny,maxy); CREATE TABLE metadata(value TEXT);')
+    db.executescript(PLATFORM_SCHEMA)
     factory = osmium.geom.WKTFactory()
     boundaries = []
 
@@ -53,7 +55,8 @@ def prepare(args):
 
         def way(self, way):
             tags = dict(way.tags)
-            if not candidate_category(tags):
+            is_platform=tags.get('public_transport')=='platform' or tags.get('highway')=='platform'
+            if not candidate_category(tags) and not is_platform:
                 return
             try:
                 geom = transform(TO_METRES, from_wkt(factory.create_linestring(way)))
@@ -61,6 +64,13 @@ def prepare(args):
                 raise ValueError(f'OSM way {way.id}: puuttuvat solmut; käytä täydellistä PBF-otosta.')
             if geom.length == 0:
                 return
+            if is_platform:
+                polygon=platform_polygon(tags,geom)
+                if polygon is not None:
+                    x1,y1,x2,y2=polygon.bounds
+                    db.execute('INSERT INTO platforms VALUES (?,?,?)',(way.id,json.dumps(tags),polygon.wkb))
+                    db.execute('INSERT INTO platform_bounds VALUES (?,?,?,?,?)',(way.id,x1,x2,y1,y2))
+            if not candidate_category(tags):return
             x1,y1,x2,y2 = geom.bounds
             db.execute('INSERT INTO ways VALUES (?,?,?)', (way.id, json.dumps(tags), geom.wkb))
             db.execute('INSERT INTO bounds VALUES (?,?,?,?,?)', (way.id,x1,x2,y1,y2))
@@ -85,7 +95,7 @@ def prepare(args):
         Handler().apply_file(args.pbf, locations=True, idx='sparse_file_array,'+index)
         with open(args.pbf,'rb') as source:
             checksum = hashlib.file_digest(source,'sha256').hexdigest()
-        meta = {'osm_date':args.osm_date, 'source':Path(args.pbf).name, 'sha256':checksum, 'version':VERSION,'cache_selection_version':4}
+        meta = {'osm_date':args.osm_date, 'source':Path(args.pbf).name, 'sha256':checksum, 'version':VERSION,'cache_selection_version':6}
         db.execute('INSERT INTO metadata VALUES (?)',(json.dumps(meta),))
         db.commit()
         dump(args.boundaries, {'type':'FeatureCollection','features':boundaries})
@@ -122,7 +132,7 @@ def alignment(a,b):
     norm = math.hypot(ax,ay)*math.hypot(bx,by)
     return abs((ax*bx+ay*by)/norm) if norm else 0
 
-def measure(boundary, ways, distance=20, progress=None, rejections=None, corridor_exclusions=None):
+def measure(boundary, ways, distance=20, progress=None, rejections=None, corridor_exclusions=None,platforms=(),platform_exclusions=None):
     """5 m direction sampling; only exact intersected lengths are accumulated."""
     roads = []
     for oid,tags,geom in ways:
@@ -133,6 +143,8 @@ def measure(boundary, ways, distance=20, progress=None, rejections=None, corrido
     if progress:
         progress(f'{len(roads):,} ajoradan osaa; erillisten väylien läheisyysvertailu alkaa')
     network=WalkingNetwork(ways,level,distance)
+    platform_access=platform_access_ways(ways,platforms,network)
+    if platform_exclusions is not None:platform_exclusions.update(platform_access)
     paths = []
     supports = []
     confirmed_spines=set()
@@ -144,6 +156,9 @@ def measure(boundary, ways, distance=20, progress=None, rejections=None, corrido
     for number,(oid,tags,geom) in enumerate(ways,1):
         if progress and number % 2000 == 0:
             progress(f'{number:,} / {len(ways):,} lähtöväylää käsitelty')
+        if oid in platform_access:
+            rejections[str(oid)]='pysakkilaiturin_yhteys'
+            continue
         kind = category(tags)
         if kind is None:
             reason=tag_rejection(tags)
@@ -198,7 +213,7 @@ def measure(boundary, ways, distance=20, progress=None, rejections=None, corrido
     if progress:
         progress(f'{len(candidates):,} ehdokasosaa; lähempien saman puolen jalankulkuväylien tarkistus alkaa')
     kept,removed=filter_outer_paths(candidates,roads+living,distance,level,alignment,progress,confirmed_ids=confirmed_spines)
-    isolated=network.isolated_rejections(ways,kept)
+    isolated=network.isolated_rejections(ways,kept,ignored_continuations=platform_access)
     kept=[row for row in kept if row[0] not in isolated]
     blocked_ids={row['osm_id'] for row in removed}
     grouped={}
@@ -233,8 +248,11 @@ def measure(boundary, ways, distance=20, progress=None, rejections=None, corrido
             rejections[str(oid)]='kunnan_ulkopuolella'
     # A corner can be shorter or less parallel than a street-side run. It must
     # connect an accepted sidewalk to another accepted sidewalk or a crossing.
-    links=supported_corner_links(ways,supports,network,distance)
-    links.extend(sidewalk_end_extensions(ways,supports,network,distance))
+    walking_ways=[row for row in ways if row[0] not in platform_access]
+    links=supported_corner_links(walking_ways,supports,network,distance)
+    links.extend(sidewalk_end_extensions(walking_ways,supports,network,distance))
+    links.extend(supported_missing_chains(walking_ways,supports,network,distance))
+    links=merge_link_intervals(ways,links)
     if links:
         link_ids={oid for oid,_,_ in links}
         junction_connections={(oid,bid) for oid,tags,geom in links for point in geom.coords
@@ -296,9 +314,9 @@ def compute(args):
         db.close()
         raise ValueError('OSM-välimuistin valmistelu ei ole valmistunut. Tee prepare uuteen tiedostoon.')
     meta = json.loads(metadata_row[0])
-    if meta.get('cache_selection_version',1)<4:
+    if meta.get('cache_selection_version',1)<6:
         db.close()
-        raise ValueError('Vanha välimuistin valinta: aja tarvittavat scripts.extend_reference_roads, scripts.extend_walking_candidates ja scripts.extend_crossing_context moduuleina tai valmistele uusi välimuisti.')
+        raise ValueError('Vanha välimuistin valinta: aja tarvittavat scripts.extend_reference_roads, scripts.extend_walking_candidates, scripts.extend_crossing_context, scripts.extend_bus_references ja scripts.extend_platform_context moduuleina tai valmistele uusi välimuisti.')
     selected = [f for f in features if codes is None or f['properties']['code'] in codes]
     if codes and codes - {f['properties']['code'] for f in selected}:
         raise ValueError('Kuntakoodia ei löydy raja-aineistosta.')
@@ -320,10 +338,13 @@ def compute(args):
         x1,y1,x2,y2 = boundary.buffer(args.distance+10).bounds
         rows = db.execute('SELECT w.id,w.tags,w.geom FROM ways w JOIN bounds b ON w.id=b.id WHERE b.maxx>=? AND b.minx<=? AND b.maxy>=? AND b.miny<=?',(x1,x2,y1,y2))
         ways = [(oid,json.loads(tags),from_wkb(geom)) for oid,tags,geom in rows]
+        platform_rows=db.execute('SELECT p.id,p.tags,p.geom FROM platforms p JOIN platform_bounds b ON p.id=b.id WHERE b.maxx>=? AND b.minx<=? AND b.maxy>=? AND b.miny<=?',(x1,x2,y1,y2))
+        platforms=[(oid,json.loads(tags),from_wkb(geom)) for oid,tags,geom in platform_rows]
         print(f'{code}: {len(ways):,} lähtöväylää kunnan rajauslaatikossa',flush=True)
         rejections = {}
         corridor_exclusions=[]
-        stats,audit = measure(boundary, ways,args.distance,progress=lambda message:print(f'{code}: {message}',flush=True),rejections=rejections,corridor_exclusions=corridor_exclusions)
+        platform_exclusions={}
+        stats,audit = measure(boundary, ways,args.distance,progress=lambda message:print(f'{code}: {message}',flush=True),rejections=rejections,corridor_exclusions=corridor_exclusions,platforms=platforms,platform_exclusions=platform_exclusions)
         km = {k:round(stats[k]/1000,6) for k in ('tagged','footway','segregated','shared','unknown')}
         total = sum(km[k] for k in ('tagged','footway','segregated'))
         result = {'code':code,'name':feature['properties']['name'],'population':n,'population_date':pop['date'],'population_source':pop['source'],'km':km,'total_km':round(total,6),'m_per_resident':round(total*1000/n,4),'geometry':feature['geometry'],'osm':meta,'distance_m':args.distance,'signature':signature,'method_version':VERSION,'generated_at':datetime.now(timezone.utc).isoformat()}
@@ -331,6 +352,7 @@ def compute(args):
         result['footway_geometry'] = FOOTWAY_GEOMETRY
         result['network_policy'] = NETWORK_POLICY
         result['corner_link_policy'] = CORNER_POLICY
+        result['platform_policy'] = PLATFORM_POLICY
         result['surface_policy'] = {'missing':'assumed_asphalt','known_non_hard':'excluded'}
         result['corridor_policy'] = {'innermost_walking_route_only':True,'side_order_tolerance_m':0.25,'living_street_included':False,
                                      'road_sidewalk_no_blocks_inference':True,'explicit_sidepath_overrides_road_no':True}
@@ -352,7 +374,8 @@ def compute(args):
         result['diagnostics']['corridor_removed_m']=round(sum(v['removed_m'] for v in exclusion_info.values()),3)
         dump(output,result)
         dump(Path(args.output)/f'{code}.segments.geojson',{'type':'FeatureCollection','features':audit})
-        dump(Path(args.output)/f'{code}.rejections.json',{'signature':signature,'ways':rejections,'corridor_exclusions':exclusion_info})
+        dump(Path(args.output)/f'{code}.rejections.json',{'signature':signature,'ways':rejections,'corridor_exclusions':exclusion_info,'platform_access':platform_exclusions})
+        dump(Path(args.output)/f'{code}.platforms.geojson',{'type':'FeatureCollection','features':[{'type':'Feature','properties':{'osm_id':oid,**tags},'geometry':mapping(transform(TO_LONLAT,area))} for oid,tags,area in platforms]})
         dump(Path(args.output)/f'{code}.corridor_exclusions.geojson',{'type':'FeatureCollection','features':exclusion_features})
         print(f'{code} {result["name"]}: {total:.3f} km',flush=True)
     db.close()

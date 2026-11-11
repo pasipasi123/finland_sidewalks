@@ -26,7 +26,7 @@ TAG_FIELDS = {
     'nimi': 'name', 'highway': 'highway', 'footway': 'footway', 'foot': 'foot',
     'bicycle': 'bicycle', 'segregated': 'segregated', 'sidewalk': 'sidewalk',
     'sidewalk_left': 'sidewalk:left', 'sidewalk_right': 'sidewalk:right',
-    'sidewalk_both': 'sidewalk:both', 'access': 'access', 'layer': 'layer',
+    'sidewalk_both': 'sidewalk:both', 'access': 'access', 'bus':'bus', 'psv':'psv', 'layer': 'layer',
     'bridge': 'bridge', 'tunnel': 'tunnel',
     'surface': 'surface', 'footway_surface': 'footway:surface',
 }
@@ -90,12 +90,14 @@ def export_gpkg(result_path, audit_path, cache_path, output_path):
     rejection_path = Path(result_path).with_suffix('.rejections.json')
     rejections = {}
     corridor_exclusions = {}
+    platform_access = {}
     if rejection_path.exists():
         rejection_data = json.loads(rejection_path.read_text(encoding='utf-8'))
         if rejection_data['signature'] != result['signature']:
             raise ValueError('Hylkäystiedot eivät vastaa laskentatulosta.')
         rejections = rejection_data['ways']
         corridor_exclusions = rejection_data.get('corridor_exclusions',{})
+        platform_access = rejection_data.get('platform_access',{})
     boundary = transform(TO_METRES, shape(result['geometry']))
     if not boundary.is_valid:
         raise ValueError('Virheellinen kuntageometria')
@@ -156,19 +158,23 @@ def export_gpkg(result_path, audit_path, cache_path, output_path):
                     kind = candidate_category(tags)
                     if (tags.get('highway') not in {'footway','cycleway','path'}) != road_layer:
                         continue
-                    geometry = line_geometry(from_wkb(wkb).intersection(context_area))
+                    original=from_wkb(wkb)
+                    geometry = line_geometry(original.intersection(context_area))
                     if geometry is None:
                         continue
+                    partial=(kind in {'footway','segregated'} and included_per_way[oid]>0
+                             and original.intersection(boundary).length-included_per_way[oid]>.1)
                     yield {'geometry':mapping(geometry), 'properties':{
                         **properties(oid,tags),'luokka':kind,'naytettava_m':geometry.length,
                         'kadunvarsi_m':per_way[oid], 'mukaan_m':included_per_way[oid],
                         'audit_osumia':int(per_way[oid] > 0),
-                        'hylkayssyy':tag_rejection(tags) or rejections.get(str(oid)) or (('osittain_'+corridor_exclusions[str(oid)]['reason']) if str(oid) in corridor_exclusions else None) or ({'shared':'yhdistetty_vayla','unknown':'erottelu_tuntematon'}.get(kind)),
+                        'hylkayssyy':tag_rejection(tags) or rejections.get(str(oid)) or (('osittain_'+corridor_exclusions[str(oid)]['reason']) if str(oid) in corridor_exclusions else None) or ('osittain_poissuljettu' if partial else None) or ({'shared':'yhdistetty_vayla','unknown':'erottelu_tuntematon'}.get(kind)),
                         'varjossa_m':corridor_exclusions.get(str(oid),{}).get('removed_m',0),
                         'estaja_osm':','.join(str(i) for i in corridor_exclusions.get(str(oid),{}).get('blockers',[])),
+                        'pysakkilaituri_osm':','.join(str(i) for i in platform_access.get(str(oid),[])),
                         'viitekatu_osm':','.join(str(i) for i in corridor_exclusions.get(str(oid),{}).get('road_ids',[]))}}
             description = ('Laskennan välimuistin alkuperäiset ajoradat' if road_layer else 'Laskennan välimuistin alkuperäiset jalankulku- ja pyöräväylät') + f'; leikattu kuntarajaan + {result["distance_m"]+10:g} m puskuriin. Sisältää myös kadunvarsisuodatuksessa hylättyjä osia. Ei kaikkia OSM:n highway-luokkia.'
-            schema = {'geometry':'MultiLineString', 'properties':{**COMMON,'luokka':'str','naytettava_m':'float','kadunvarsi_m':'float','mukaan_m':'float','audit_osumia':'int','hylkayssyy':'str','varjossa_m':'float','estaja_osm':'str','viitekatu_osm':'str'}}
+            schema = {'geometry':'MultiLineString', 'properties':{**COMMON,'luokka':'str','naytettava_m':'float','kadunvarsi_m':'float','mukaan_m':'float','audit_osumia':'int','hylkayssyy':'str','varjossa_m':'float','estaja_osm':'str','pysakkilaituri_osm':'str','viitekatu_osm':'str'}}
             manifest[name] = write_layer(str(partial),name,schema,source_records(),description)
 
         polygon = MultiPolygon([boundary]) if boundary.geom_type=='Polygon' else boundary
@@ -191,7 +197,7 @@ def export_gpkg(result_path, audit_path, cache_path, output_path):
             'kadunvarsi_m':'OSM-lähtöväylän auditointiosuuksien summa, myös yhdistetyt ja tuntemattomat mukana. Nolla tarkoittaa, ettei välimuistin väylällä ole auditointiosumia.',
             'osm_lisenssi':'© OpenStreetMap contributors · ODbL · https://www.openstreetmap.org/copyright',
             'tarkistustila':'Pintatietoon ja geometriaan perustuva rajaus; käyttäjän ensimmäinen karttatarkistus huomioitu. Ei maastovarmennettu.',
-            'hylkayssyy':'Lähtöväylän poissulun syy. Puuttuva footway=sidewalk tai pinta ei ole poissulkusyy.',
+            'hylkayssyy':'Lähtöväylän poissulun syy. osittain_poissuljettu = kunnan sisäisestä viivasta on hyväksytty vain osa; NULL ei enää peitä yli 0,1 m puuttuvaa osuutta. Puuttuva footway=sidewalk tai pinta ei ole poissulkusyy.',
             'ajoradan_sidewalk_no':'Lähimmän saman suuntaisen ajoradan sidewalk=no tai puolikohtainen puuttumistieto estää tavallisen footwayn geometrisen hyväksynnän. Erillisen viivan footway=sidewalk tai is_sidepath=yes ohittaa ristiriidan. Ajorata säilyy sijaintiviitteenä.',
             'pinnan_tila':'osm_tieto = pinta tulee OSM:stä. oletus_asfaltti = pintatieto puuttuu ja laskennassa oletetaan asfaltti. Alkuperäisiä surface-tägejä ei muuteta.',
             'rinnakkaiset_vaylat':'Lähimmän saman kadunpuolen kulkukelpoisen jalankulkuväylän takaiset rinnakkaiset osuudet poistetaan. varjossa_m on suoraan poistetun geometrian pituus; lyhyet jäljelle jäävät footway-jaksot voivat poistua lisäksi 15 m säännöllä. estaja_osm ja viitekatu_osm kertovat OSM-tunnisteet.',

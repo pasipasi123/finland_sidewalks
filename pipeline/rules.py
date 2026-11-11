@@ -13,7 +13,7 @@ def reference_road(tags):
     if tags.get('access')=='no':
         # A bus/cycle/destination street remains a physical street reference.
         allowed = {'yes','designated','permissive','destination','customers'}
-        return any(tags.get(mode) in allowed for mode in ('foot','bicycle','psv','motor_vehicle','vehicle'))
+        return any(tags.get(mode) in allowed for mode in ('foot','bicycle','psv','bus','motor_vehicle','vehicle'))
     # foot=no applies to the carriageway, not to its separate sidewalks.
     return True
 

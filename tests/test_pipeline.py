@@ -8,8 +8,10 @@ import sqlite3
 from contextlib import closing
 from pathlib import Path
 from shapely.geometry import LineString, box, shape
-from pipeline.rules import category, sidewalk_sides, tag_rejection
-from pipeline.cli import measure, prepare, compute, publish, transform, TO_METRES
+from pipeline.rules import category, sidewalk_sides, tag_rejection, reference_road
+from pipeline.cli import measure, prepare, compute, publish, transform, TO_METRES, level
+from pipeline.platforms import platform_access_ways
+from pipeline.network import WalkingNetwork
 from pipeline.export_gpkg import export_gpkg, line_geometry, properties
 from pipeline.sync_gpkg import sync_gpkg
 
@@ -19,6 +21,10 @@ def way(oid, coords, **tags):
     return oid,tags,LineString(coords)
 
 class Rules(unittest.TestCase):
+    def test_bus_exception_keeps_physical_street_reference(self):
+        self.assertTrue(reference_road({'highway':'secondary','access':'no','bus':'yes','foot':'no'}))
+        self.assertFalse(reference_road({'highway':'secondary','access':'no','bus':'no'}))
+        self.assertFalse(reference_road({'highway':'secondary','access':'private','bus':'yes'}))
     def test_destination_access_respects_walking_override(self):
         self.assertEqual(tag_rejection({'highway':'footway','access':'destination'}),'jalankulku_vain_maaranpaahan')
         self.assertEqual(tag_rejection({'highway':'footway','foot':'destination','access':'yes'}),'jalankulku_vain_maaranpaahan')
@@ -56,6 +62,79 @@ class Rules(unittest.TestCase):
         self.assertEqual(category({'highway':'footway','surface':'paving_stones','lit':'yes'}),'footway')
 
 class Geometry(unittest.TestCase):
+    def test_nasinlinnankatu_two_sided_offsets_are_complete(self):
+        f=json.loads((Path(__file__).parent/'fixtures/tampere_nasinlinnankatu_offsets.json').read_text(encoding='utf-8'))
+        ways=[(w['id'],w['tags'],transform(TO_METRES,shape(w['geometry']))) for w in f['ways']]
+        platforms=[(w['id'],w['tags'],transform(TO_METRES,shape(w['geometry']))) for w in f['platforms']]
+        _,audit=measure(transform(TO_METRES,shape(f['boundary'])),ways,platforms=platforms)
+        counted=sum(row['properties']['length_m'] for row in audit if row['properties']['osm_id']==197195792)
+        self.assertAlmostEqual(counted,next(g.length for oid,t,g in ways if oid==197195792),delta=.02)
+
+    def test_two_sided_midblock_repair_stays_in_standard_street_corridor(self):
+        for offset,complete in [(18,True),(22,False)]:
+            ways=[way(1,[(0,0),(200,0)],highway='residential'),
+                  way(2,[(20,8),(60,8),(62,offset),(68,offset),(70,8),(150,8)],highway='footway')]
+            stats,_=measure(box(-20,-20,220,50),ways)
+            self.assertAlmostEqual(stats['footway'],ways[1][2].length if complete else 120,delta=.01)
+
+    def test_tuulensuu_platform_access_does_not_hide_street_sidewalks(self):
+        f=json.loads((Path(__file__).parent/'fixtures/tampere_tuulensuu_platforms.json').read_text(encoding='utf-8'))
+        ways=[(w['id'],w['tags'],transform(TO_METRES,shape(w['geometry']))) for w in f['ways']]
+        platforms=[(w['id'],w['tags'],transform(TO_METRES,shape(w['geometry']))) for w in f['platforms']]
+        excluded={};_,audit=measure(transform(TO_METRES,shape(f['boundary'])),ways,platforms=platforms,platform_exclusions=excluded)
+        for oid in [553272448,67295429]:
+            counted=sum(row['properties']['length_m'] for row in audit if row['properties']['osm_id']==oid)
+            self.assertAlmostEqual(counted,next(g.length for i,t,g in ways if i==oid),delta=.03)
+        for oid,pid in [(1538890560,849224795),(1538890557,849224794)]:
+            self.assertEqual(excluded[oid],[pid])
+            self.assertNotIn(oid,{row['properties']['osm_id'] for row in audit})
+
+    def test_platform_access_requires_terminal_node_at_mapped_area(self):
+        area=(10,{'public_transport':'platform'},box(40,3,70,7))
+        base=[way(1,[(0,0),(100,0)],highway='residential'),way(2,[(0,10),(100,10)],highway='footway'),way(3,[(0,5),(0,10)],highway='footway')]
+        path=way(4,[(0,5),(40,5)],highway='footway')
+        ways=base+[path]
+        self.assertEqual(platform_access_ways(ways,[area],WalkingNetwork(ways,level)),{4:[10]})
+        for alternate in [way(4,[(0,5),(39.5,5)],highway='footway'),way(4,[(0,5),(40,5)],highway='footway',footway='sidewalk')]:
+            ways=base+[alternate]
+            self.assertEqual(platform_access_ways(ways,[area],WalkingNetwork(ways,level)),{})
+
+    def test_through_footway_and_other_level_are_not_platform_access(self):
+        ways=[way(1,[(0,5),(40,5)],highway='footway'),way(2,[(40,5),(100,5)],highway='footway')]
+        area=(10,{'public_transport':'platform'},box(40,3,70,7))
+        self.assertEqual(platform_access_ways(ways,[area],WalkingNetwork(ways,level)),{})
+        ways=[way(1,[(0,5),(40,5)],highway='footway')]
+        raised=(10,{'public_transport':'platform','level':'1'},area[2])
+        self.assertEqual(platform_access_ways(ways,[raised],WalkingNetwork(ways,level)),{})
+    def test_reported_tampere_bus_street_sidewalk(self):
+        f=json.loads((Path(__file__).parent/'fixtures/tampere_insinoorinkatu_bus.json').read_text(encoding='utf-8'))
+        ways=[(w['id'],w['tags'],transform(TO_METRES,shape(w['geometry']))) for w in f['ways']]
+        _,audit=measure(transform(TO_METRES,shape(f['boundary'])),ways)
+        self.assertGreater(sum(row['properties']['length_m'] for row in audit if row['properties']['osm_id']==1144968837),120)
+        self.assertTrue(reference_road(next(tags for oid,tags,g in ways if oid==794251023)))
+
+    def test_reported_tampere_corner_chains_and_long_way_gap(self):
+        f=json.loads((Path(__file__).parent/'fixtures/tampere_corner_gaps.json').read_text(encoding='utf-8'))
+        ways=[(w['id'],w['tags'],transform(TO_METRES,shape(w['geometry']))) for w in f['ways']]
+        _,audit=measure(transform(TO_METRES,shape(f['boundary'])),ways)
+        lengths={oid:sum(row['properties']['length_m'] for row in audit if row['properties']['osm_id']==oid) for oid in [42274329,88200539,1095271885]}
+        self.assertGreater(lengths[42274329],594)
+        for oid in [88200539,1095271885]:
+            self.assertAlmostEqual(lengths[oid],next(g.length for i,t,g in ways if i==oid),delta=.02)
+
+    def test_reported_hameenkatu_sidewalks(self):
+        f=json.loads((Path(__file__).parent/'fixtures/tampere_hameenkatu_gaps.json').read_text(encoding='utf-8'))
+        ways=[(w['id'],w['tags'],transform(TO_METRES,shape(w['geometry']))) for w in f['ways']]
+        _,audit=measure(transform(TO_METRES,shape(f['boundary'])),ways)
+        for oid in [379163743,592800179]:
+            counted=sum(row['properties']['length_m'] for row in audit if row['properties']['osm_id']==oid)
+            self.assertAlmostEqual(counted,next(g.length for i,t,g in ways if i==oid),delta=.03)
+
+    def test_bus_only_street_has_separate_sidewalk(self):
+        ways=[way(1,[(0,0),(100,0)],highway='secondary',access='no',bus='yes',foot='no'),
+              way(2,[(0,8),(100,8)],highway='footway')]
+        stats,_=measure(box(-20,-20,120,40),ways)
+        self.assertAlmostEqual(stats['footway'],100)
     def test_reported_short_corner_link_between_real_sidewalks(self):
         f=json.loads((Path(__file__).parent/'fixtures/oulu_corner_link.json').read_text(encoding='utf-8'))
         ways=[(w['id'],w['tags'],transform(TO_METRES,shape(w['geometry']))) for w in f['ways']]
