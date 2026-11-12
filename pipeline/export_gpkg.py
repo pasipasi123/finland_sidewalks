@@ -13,6 +13,7 @@ from shapely.geometry import MultiLineString, MultiPolygon, mapping, shape
 
 from .cli import TO_METRES, transform
 from .rules import candidate_category, tag_rejection, walking_surface
+from .metrics import update_per_capita
 
 LAYERS = {
     'tagged': ('jalkakaytavat_ajoratatagit', 'Ajoradan sidewalk-tägi; geometria on ajoradan keskilinja, ei jalkakäytävän tarkka sijainti.'),
@@ -86,6 +87,7 @@ def export_gpkg(result_path, audit_path, cache_path, output_path):
     if target.exists() or partial.exists():
         raise ValueError(f'Tulos tai keskeneräinen vienti on jo olemassa: {target}. Valitse uusi tiedostonimi.')
     result = json.loads(Path(result_path).read_text(encoding='utf-8'))
+    update_per_capita(result)
     audit = json.loads(Path(audit_path).read_text(encoding='utf-8'))['features']
     rejection_path = Path(result_path).with_suffix('.rejections.json')
     rejections = {}
@@ -179,8 +181,8 @@ def export_gpkg(result_path, audit_path, cache_path, output_path):
 
         polygon = MultiPolygon([boundary]) if boundary.geom_type=='Polygon' else boundary
         manifest['kuntaraja'] = write_layer(str(partial),'kuntaraja',
-            {'geometry':'MultiPolygon','properties':{'koodi':'str','nimi':'str','jalkakaytavat_km':'float','m_asukas':'float','asukasluku':'int64'}},
-            [{'geometry':mapping(polygon),'properties':{'koodi':result['code'],'nimi':result['name'],'jalkakaytavat_km':result['total_km'],'m_asukas':result['m_per_resident'],'asukasluku':result['population']}}],
+            {'geometry':'MultiPolygon','properties':{'koodi':'str','nimi':'str','jalkakaytavat_km':'float','m_asukas':'float','asukasluku':'int64','yhdistetty_m_asukas':'float','eroteltu_m_asukas':'float'}},
+            [{'geometry':mapping(polygon),'properties':{'koodi':result['code'],'nimi':result['name'],'jalkakaytavat_km':result['total_km'],'m_asukas':result['m_per_resident'],'asukasluku':result['population'],'yhdistetty_m_asukas':result['shared_m_per_resident'],'eroteltu_m_asukas':result['segregated_m_per_resident']}}],
             'Laskennassa käytetty OSM-kuntaraja. Ei virallinen kuntaraja-aineisto.')
 
         info = {

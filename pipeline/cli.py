@@ -17,15 +17,17 @@ from shapely import from_wkb, from_wkt, transform as coordinate_transform, union
 from shapely.geometry import LineString, mapping, shape
 from shapely.strtree import STRtree
 
-from .rules import category, sidewalk_sides, candidate_category, tag_rejection, walking_surface
+from .rules import category, candidate_category, tag_rejection, walking_surface
 from .corridor import filter_outer_paths,flat_lines,direction_runs
 from .network import WalkingNetwork,NETWORK_POLICY
 from .junctions import supported_corner_links,sidewalk_end_extensions,supported_missing_chains,merge_link_intervals,CORNER_POLICY
 from .platforms import PLATFORM_SCHEMA,PLATFORM_POLICY,platform_polygon,platform_access_ways
+from .metrics import METRICS_VERSION, PER_CAPITA, update_per_capita
+from .tagged import TAGGED_POLICY, tagged_sidewalks
 
 TO_METRES = Transformer.from_crs(4326, 3067, always_xy=True).transform
 TO_LONLAT = Transformer.from_crs(3067, 4326, always_xy=True).transform
-VERSION = '1.6.4'
+VERSION = '1.6.5'
 FOOTWAY_GEOMETRY = {'max_distance_m':20, 'max_angle_degrees':20,
                     'min_run_m':15,'max_turn_degrees':45}
 
@@ -38,6 +40,9 @@ def dump(path, value):
     temp = path.with_suffix(path.suffix + '.tmp')
     temp.write_text(json.dumps(value, ensure_ascii=False, allow_nan=False), encoding='utf-8')
     temp.replace(path)
+
+def calculation_signature(meta, boundaries, population, distance, version=VERSION):
+    return hashlib.sha256((json.dumps(meta,sort_keys=True)+Path(boundaries).read_text(encoding='utf-8')+Path(population).read_text(encoding='utf-8-sig')+str(distance)+version).encode()).hexdigest()
 
 def prepare(args):
     target = Path(args.cache)
@@ -132,7 +137,7 @@ def alignment(a,b):
     norm = math.hypot(ax,ay)*math.hypot(bx,by)
     return abs((ax*bx+ay*by)/norm) if norm else 0
 
-def measure(boundary, ways, distance=20, progress=None, rejections=None, corridor_exclusions=None,platforms=(),platform_exclusions=None):
+def measure(boundary, ways, distance=20, progress=None, rejections=None, corridor_exclusions=None,platforms=(),platform_exclusions=None,collect_audit=True):
     """5 m direction sampling; only exact intersected lengths are accumulated."""
     roads = []
     for oid,tags,geom in ways:
@@ -238,10 +243,11 @@ def measure(boundary, ways, distance=20, progress=None, rejections=None, corrido
             stats[kind]+=clipped.length
             if kind in {'footway','segregated'} and not walking_surface(tags):
                 stats['assumed_asphalt']+=clipped.length
+            paths.append((clipped,tags))
             if kind in {'footway','segregated'}:
-                paths.append((part,tags))
                 supports.append((oid,tags,part))
-            audit.append({'type':'Feature','properties':{'osm_id':oid,'category':kind,'length_m':round(clipped.length,3)},'geometry':mapping(transform(TO_LONLAT,clipped))})
+            if collect_audit:
+                audit.append({'type':'Feature','properties':{'osm_id':oid,'category':kind,'length_m':round(clipped.length,3)},'geometry':mapping(transform(TO_LONLAT,clipped))})
         if counted:
             rejections.pop(str(oid),None)
         elif oid not in blocked_ids:
@@ -271,36 +277,19 @@ def measure(boundary, ways, distance=20, progress=None, rejections=None, corrido
             stats['footway']+=part.length
             if not walking_surface(tags):stats['assumed_asphalt']+=part.length
             paths.append((part,tags))
-            audit.append({'type':'Feature','properties':{'osm_id':oid,'category':'footway','length_m':round(part.length,3),'junction_link':True},'geometry':mapping(transform(TO_LONLAT,part))})
+            if collect_audit:
+                audit.append({'type':'Feature','properties':{'osm_id':oid,'category':'footway','length_m':round(part.length,3),'junction_link':True},'geometry':mapping(transform(TO_LONLAT,part))})
             rejections.pop(str(oid),None)
         removed.extend(removed_links)
     if corridor_exclusions is not None:
         corridor_exclusions.extend(removed)
     # A separately mapped qualifying path takes precedence over the same road side.
-    path_geoms = [p[0] for p in paths]
-    path_tree = STRtree(path_geoms)
     if progress:
         progress(f'{len(paths):,} hyväksyttyä erillisväylän osaa; ajoratatägien kaksoislaskennan poisto alkaa')
-    for oid,tags,road in roads:
-        for side,enabled in zip(('left','right'),sidewalk_sides(tags)):
-            if not enabled:
-                continue
-            remaining = road.intersection(boundary)
-            for raw_i in path_tree.query(road.buffer(distance)):
-                i = int(raw_i)
-                path,ptags = paths[i]
-                if level(tags)!=level(ptags) or alignment(road,path) < math.cos(math.radians(30)):
-                    continue
-                mid = path.interpolate(.5,normalized=True)
-                x,y = road.coords[0]
-                dx,dy = road.coords[-1][0]-x,road.coords[-1][1]-y
-                cross = dx*(mid.y-y)-dy*(mid.x-x)
-                if (side=='left' and cross>0) or (side=='right' and cross<0):
-                    # Flat caps suppress only the path's longitudinal extent.
-                    remaining = remaining.difference(path.buffer(distance,cap_style=2))
-            stats['tagged'] += remaining.length
-            if remaining.length > 1e-6:
-                audit.append({'type':'Feature','properties':{'osm_id':oid,'category':'tagged','side':side,'length_m':round(remaining.length,3)},'geometry':mapping(transform(TO_LONLAT,remaining))})
+    for oid,side,remaining in tagged_sidewalks([row for row in ways if category(row[1])=='road'],paths,boundary,distance,level):
+        stats['tagged'] += remaining.length
+        if collect_audit:
+            audit.append({'type':'Feature','properties':{'osm_id':oid,'category':'tagged','side':side,'length_m':round(remaining.length,3)},'geometry':mapping(transform(TO_LONLAT,remaining))})
     return stats,audit
 
 def compute(args):
@@ -320,14 +309,18 @@ def compute(args):
     selected = [f for f in features if codes is None or f['properties']['code'] in codes]
     if codes and codes - {f['properties']['code'] for f in selected}:
         raise ValueError('Kuntakoodia ei löydy raja-aineistosta.')
-    signature = hashlib.sha256((json.dumps(meta,sort_keys=True)+Path(args.boundaries).read_text(encoding='utf-8')+Path(args.population).read_text(encoding='utf-8-sig')+str(args.distance)+VERSION).encode()).hexdigest()
+    signature = calculation_signature(meta,args.boundaries,args.population,args.distance)
     for feature in selected:
         started = time.perf_counter()
         code = feature['properties']['code']
         output = Path(args.output)/f'{code}.json'
-        if output.exists() and not args.force and json.loads(output.read_text(encoding='utf-8')).get('signature') == signature:
-            print(f'{code}: ennallaan, ohitetaan')
-            continue
+        if output.exists() and not args.force:
+            existing = json.loads(output.read_text(encoding='utf-8'))
+            if existing.get('signature') == signature:
+                if update_per_capita(existing):
+                    dump(output, existing)
+                print(f'{code}: geometriat ennallaan, asukasmittarit ajan tasalla')
+                continue
         pop = population[code]
         n = int(pop['population'])
         if n <= 0 or not pop['date'] or not pop['source']:
@@ -344,16 +337,19 @@ def compute(args):
         rejections = {}
         corridor_exclusions=[]
         platform_exclusions={}
-        stats,audit = measure(boundary, ways,args.distance,progress=lambda message:print(f'{code}: {message}',flush=True),rejections=rejections,corridor_exclusions=corridor_exclusions,platforms=platforms,platform_exclusions=platform_exclusions)
+        summary_only = getattr(args,'summary_only',False)
+        stats,audit = measure(boundary, ways,args.distance,progress=lambda message:print(f'{code}: {message}',flush=True),rejections=rejections,corridor_exclusions=None if summary_only else corridor_exclusions,platforms=platforms,platform_exclusions=platform_exclusions,collect_audit=not summary_only)
         km = {k:round(stats[k]/1000,6) for k in ('tagged','footway','segregated','shared','unknown')}
         total = sum(km[k] for k in ('tagged','footway','segregated'))
         result = {'code':code,'name':feature['properties']['name'],'population':n,'population_date':pop['date'],'population_source':pop['source'],'km':km,'total_km':round(total,6),'m_per_resident':round(total*1000/n,4),'geometry':feature['geometry'],'osm':meta,'distance_m':args.distance,'signature':signature,'method_version':VERSION,'generated_at':datetime.now(timezone.utc).isoformat()}
-        result['diagnostics'] = {'input_ways':len(ways), 'audit_features':len(audit), 'calculation_seconds':round(time.perf_counter()-started,3)}
+        update_per_capita(result)
+        result['diagnostics'] = {'input_ways':len(ways), 'audit_features':None if summary_only else len(audit), 'detail_geometry_exported':not summary_only, 'calculation_seconds':round(time.perf_counter()-started,3)}
         result['footway_geometry'] = FOOTWAY_GEOMETRY
         result['network_policy'] = NETWORK_POLICY
         result['corner_link_policy'] = CORNER_POLICY
         result['platform_policy'] = PLATFORM_POLICY
         result['surface_policy'] = {'missing':'assumed_asphalt','known_non_hard':'excluded'}
+        result['tagged_policy'] = TAGGED_POLICY
         result['corridor_policy'] = {'innermost_walking_route_only':True,'side_order_tolerance_m':0.25,'living_street_included':False,
                                      'road_sidewalk_no_blocks_inference':True,'explicit_sidepath_overrides_road_no':True}
         result['assumed_asphalt_km'] = round(stats['assumed_asphalt']/1000,6)
@@ -371,8 +367,12 @@ def compute(args):
             exclusion_features.append({'type':'Feature','geometry':mapping(transform(TO_LONLAT,geom)),'properties':{k:v for k,v in row.items() if k!='geometry'}|{'length_m':round(geom.length,3)}})
         for info in exclusion_info.values():
             info['blockers']=sorted(info['blockers']);info['road_ids']=sorted(info['road_ids']);info['removed_m']=round(info['removed_m'],3)
-        result['diagnostics']['corridor_removed_m']=round(sum(v['removed_m'] for v in exclusion_info.values()),3)
+        if not summary_only:
+            result['diagnostics']['corridor_removed_m']=round(sum(v['removed_m'] for v in exclusion_info.values()),3)
         dump(output,result)
+        if summary_only:
+            print(f'{code} {result["name"]}: {total:.3f} km (vain kuntayhteenveto)',flush=True)
+            continue
         dump(Path(args.output)/f'{code}.segments.geojson',{'type':'FeatureCollection','features':audit})
         dump(Path(args.output)/f'{code}.rejections.json',{'signature':signature,'ways':rejections,'corridor_exclusions':exclusion_info,'platform_access':platform_exclusions})
         dump(Path(args.output)/f'{code}.platforms.geojson',{'type':'FeatureCollection','features':[{'type':'Feature','properties':{'osm_id':oid,**tags},'geometry':mapping(transform(TO_LONLAT,area))} for oid,tags,area in platforms]})
@@ -389,23 +389,70 @@ def publish(args):
     rows = [json.loads(p.read_text(encoding='utf-8')) for p in sorted(Path(args.results).glob('[0-9][0-9][0-9].json'))]
     if not rows:
         raise ValueError('Laskettuja kuntia ei löydy')
+    if getattr(args,'expected_count',None) is not None and len(rows)!=args.expected_count:
+        raise ValueError(f'Kattavuus on {len(rows)}, odotettiin {args.expected_count}. Osittaista aineistoa ei julkaista.')
     if len({(r['signature']) for r in rows}) != 1:
         raise ValueError('Tuloksissa eri OSM-, väestö-, raja- tai menetelmäversioita. Laske yhtenäisillä lähtötiedoilla.')
-    for metric in ('total_km','m_per_resident'):
+    if {r['method_version'] for r in rows}!={VERSION}:
+        raise ValueError('Kuntatulosten menetelmä ei vastaa nykyistä laskentaversiota. Laske tulokset uudelleen.')
+    for row in rows:
+        update_per_capita(row)
+    names_from = getattr(args,'names_from',None)
+    if names_from:
+        raw = json.loads(Path(names_from).read_text(encoding='utf-8'))
+        labels = next(d['category']['label'] for d in raw['response']['dimension'].values() if any(k.startswith('KU') for k in d.get('category',{}).get('label',{})))
+        for row in rows:
+            label=labels['KU'+row['code']]
+            if label!=row['name']:
+                row['name_aliases']=[label]
+    for metric in ('total_km','m_per_resident', *PER_CAPITA):
         for rank,row in enumerate(sorted(rows,key=lambda r:r[metric],reverse=True),1):
             row['rank_'+metric] = rank
-    for row in rows:
-        row['map_path'] = svg_path(row['geometry'])
-        del row['geometry']
-    dump(args.output,{'demo':False,'municipalities':rows,'coverage_count':len(rows),'method_version':VERSION})
+    table_only = getattr(args,'table_only',False)
+    metadata = {'demo':False,'coverage_count':len(rows),'method_version':VERSION,'metrics_version':METRICS_VERSION,'license':'ODbL-1.0','population_license':'CC-BY-4.0'}
+    if getattr(args,'expected_count',None) is not None:
+        metadata['expected_count']=args.expected_count
+    csv_rows=rows
+    if table_only:
+        if len({(r['population_date'],r['population_source'],r['distance_m']) for r in rows})!=1:
+            raise ValueError('Tiivis taulukko vaatii yhteisen väestöpäivän, lähteen ja etäisyysrajan')
+        metadata.update(osm=rows[0]['osm'],population_date=rows[0]['population_date'],population_source=rows[0]['population_source'],distance_m=rows[0]['distance_m'],signature=rows[0]['signature'],generated_at=datetime.now(timezone.utc).isoformat())
+        fields = {'code','name','name_aliases','population','km','total_km','m_per_resident',*PER_CAPITA}
+        rows = [{k:v for k,v in row.items() if k in fields or k.startswith('rank_')} for row in rows]
+    else:
+        for row in rows:
+            row['map_path'] = svg_path(row['geometry'])
+            del row['geometry']
+    dump(args.output,{**metadata,'municipalities':rows})
+    csv_output=getattr(args,'csv_output',None)
+    if csv_output:
+        target=Path(csv_output)
+        target.parent.mkdir(parents=True,exist_ok=True)
+        fields=['code','name','population','sidewalks_km','sidewalks_m_per_resident','shared_km','shared_m_per_resident','segregated_km','segregated_m_per_resident','unknown_km','unknown_m_per_resident','tagged_km','footway_km','osm_date','population_date','population_source','method_version']
+        with target.open('w',encoding='utf-8-sig',newline='') as stream:
+            writer=csv.DictWriter(stream,fieldnames=fields)
+            writer.writeheader()
+            for row in csv_rows:
+                record={k:row[k] for k in ['code','name','population','shared_m_per_resident','segregated_m_per_resident','unknown_m_per_resident','population_date','population_source','method_version']}
+                record.update(sidewalks_km=row['total_km'],sidewalks_m_per_resident=row['m_per_resident'],osm_date=row['osm']['osm_date'])
+                record.update({k+'_km':row['km'][k] for k in ['shared','segregated','unknown','tagged','footway']})
+                writer.writerow(record)
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest='command',required=True)
     prep = sub.add_parser('prepare'); prep.add_argument('--pbf',required=True); prep.add_argument('--osm-date',required=True); prep.add_argument('--cache',default='data/cache/finland.db'); prep.add_argument('--boundaries',default='data/cache/municipalities.geojson'); prep.set_defaults(run=prepare)
     calc = sub.add_parser('compute'); calc.add_argument('--codes',help='Esim. 564,091; ilman valintaa kaikki kunnat'); calc.add_argument('--cache',default='data/cache/finland.db'); calc.add_argument('--boundaries',default='data/cache/municipalities.geojson'); calc.add_argument('--population',required=True); calc.add_argument('--distance',type=float,default=20); calc.add_argument('--output',default='data/results'); calc.add_argument('--force',action='store_true'); calc.set_defaults(run=compute)
-    pub = sub.add_parser('publish'); pub.add_argument('--results',default='data/results'); pub.add_argument('--output',default='web/data/municipalities.json'); pub.set_defaults(run=publish)
+    calc.add_argument('--summary-only',action='store_true',help='Vain kuntatulos; ei uusia katselu- tai auditointigeometrioita')
+    pub = sub.add_parser('publish'); pub.add_argument('--results',default='data/results/national'); pub.add_argument('--output',default='web/data/municipalities.json'); pub.set_defaults(run=publish)
+    pub.add_argument('--table-only',action='store_true',default=True,help='Tiivis taulukkoaineisto ilman geometrioita (oletus)')
+    pub.add_argument('--with-map',dest='table_only',action='store_false',help='Laaja kooste ja SVG-karttapolut erilliseen jatkokäyttöön')
+    pub.add_argument('--expected-count',type=int,default=308,help='Vaadittu kuntamäärä (oletus 308); estää keskeneräisen ajon julkaisun')
+    pub.add_argument('--csv-output',help='Vie rinnalle CSV-taulukko')
+    pub.add_argument('--names-from',help='Väestöhaun raakavastaus kuntanimien hakualiasnimille')
     args = parser.parse_args()
+    if args.command=='publish' and args.table_only and not args.csv_output:
+        args.csv_output=str(Path(args.output).with_suffix('.csv'))
     if hasattr(args,'distance') and not 0 < args.distance <= 100:
         parser.error('Etäisyyden tulee olla 0–100 metriä')
     args.run(args)

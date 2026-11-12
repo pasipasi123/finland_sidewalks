@@ -1,5 +1,7 @@
 # Kuusi kaupunkia · menetelmä 1.6.4
 
+Historiallinen tulosversio. Ajoratatägien päällekkäisyyden korjauksen jälkeiset nykyiset tulokset ovat [version 1.6.5 raportissa](six-cities-v1.6.5.md).
+
 Laskettu 11.11.2026 samalla OSM-otoksella, samalla menetelmällä ja yhteisellä lähtötietojen tarkisteella. Uudet kaupungit ovat Helsinki, Turku, Espoo ja Vantaa. Oulu ja Tampere ajettiin uudelleen kuuden kaupungin väestötaulukolla; niiden pituustulokset säilyivät ennallaan. Luvut kattavat kuntien koko alueet.
 
 ## Tulokset
@@ -12,6 +14,27 @@ Laskettu 11.11.2026 samalla OSM-otoksella, samalla menetelmällä ja yhteisellä
 | Vantaa | 092 | 252 956 | 174,536 | 0,6900 |
 | Oulu | 564 | 217 469 | 84,556 | 0,3888 |
 | Turku | 853 | 209 633 | 366,711 | 1,7493 |
+
+## Yhdistetyt ja erotellut väylät asukasta kohti
+
+Lisätty 12.11.2026 valmiista pituuksista ja samoista väkiluvuista, ilman geometrian uudelleenlaskentaa. Kaava on `1000 × luokan kilometrit / väkiluku`, yksikkö m/asukas. Mittariversio on 1.0.0; geometrian menetelmäversio ja laskentatarkiste säilyvät ennallaan.
+
+| Kunta | Yhdistetty, m/asukas | Eroteltu, m/asukas |
+| --- | ---: | ---: |
+| Oulu | 1,8421 | 0,0626 |
+| Vantaa | 1,7562 | 0,0719 |
+| Espoo | 1,4902 | 0,1130 |
+| Tampere | 1,1238 | 0,2442 |
+| Turku | 1,0486 | 0,2434 |
+| Helsinki | 0,2712 | 0,2976 |
+
+Oulussa on tässä kuuden kaupungin aineistossa sekä vähiten jalkakäytäviä että eniten yhdistettyä väylää asukasta kohti. Luvut koskevat kadunvarsien jalankulkuun tarkoitettuja pyöräväyliä, eivät koko pyörätieverkkoa. `segregated=no` kuuluu yhdistettyihin, `segregated=yes` eroteltuihin. Erottelultaan tuntemattomia ei yhdistetä kumpaankaan luokkaan; Oulussa niitä on 91,819 km. Tagitiedon puutteet voivat siten vaikuttaa vertailuun.
+
+Erotellun väylän jalankulku sisältyy jo jalkakäytävien summaan. Eroteltua mittaria ei siksi lisätä siihen uudelleen. Yhdistetty väylä pysyy erillisenä luokkana.
+
+Kuntatulokset ja paikallinen kooste sisältävät kentät `shared_m_per_resident`, `segregated_m_per_resident` ja `metrics_version`. Koosteessa on lisäksi kummankin mittarin sijoitus tämän kuuden kaupungin joukossa. Kaikkien kuuden nykyisen GeoPackagen `kuntaraja`-attribuutit ja `laskentatiedot` päivitettiin samoihin tiedostoihin; viivat säilyivät ennallaan.
+
+Mittarilaajennuksen jälkeen 64 testiä läpäistiin. Kuntatulosten, koosteen ja kaikkien kuuden GeoPackagen mittarit täsmäävät; pakettien eheys ja viiteavaimet tarkistettiin.
 
 ## Pituuksien luokat
 

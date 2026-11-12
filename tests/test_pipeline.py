@@ -1,10 +1,12 @@
 import argparse
+import csv
 import json
 import tempfile
 import subprocess
 import sys
 import unittest
 import sqlite3
+import fiona
 from contextlib import closing
 from pathlib import Path
 from shapely.geometry import LineString, box, shape
@@ -14,6 +16,98 @@ from pipeline.platforms import platform_access_ways
 from pipeline.network import WalkingNetwork
 from pipeline.export_gpkg import export_gpkg, line_geometry, properties
 from pipeline.sync_gpkg import sync_gpkg
+from pipeline.metrics import update_per_capita
+from pipeline.refresh_metrics import refresh_gpkg
+from pipeline.tagged import tagged_sidewalks
+from pipeline.refresh_tagged import update_gpkg
+
+
+class Metrics(unittest.TestCase):
+    def test_units_categories_and_idempotence(self):
+        result = {'population': 2000, 'total_km': 10,
+                  'km': {'shared': 6, 'segregated': 2, 'unknown': 100}}
+        self.assertTrue(update_per_capita(result))
+        self.assertEqual(result['m_per_resident'], 5)
+        self.assertEqual(result['shared_m_per_resident'], 3)
+        self.assertEqual(result['segregated_m_per_resident'], 1)
+        self.assertEqual(result['unknown_m_per_resident'], 50)
+        self.assertFalse(update_per_capita(result))
+
+    def test_invalid_or_missing_inputs_are_not_zero(self):
+        for population in (0, -1, float('nan')):
+            with self.assertRaises(ValueError):
+                update_per_capita({'population': population})
+        with self.assertRaises(KeyError):
+            update_per_capita({'population': 10, 'total_km': 1, 'km': {'shared': 0}})
+
+
+class TaggedCoverage(unittest.TestCase):
+    def test_summary_mode_preserves_lengths_without_exporting_audit(self):
+        ways=[way(1,[(0,0),(100,0)],highway='residential',sidewalk='both'),
+              way(2,[(0,8),(100,8)],highway='footway'),
+              way(3,[(0,-8),(100,-8)],highway='cycleway',foot='designated',segregated='no')]
+        boundary=box(-50,-50,150,50)
+        expected,audit=measure(boundary,ways)
+        actual,no_audit=measure(boundary,ways,collect_audit=False)
+        self.assertEqual(actual,expected)
+        self.assertGreater(len(audit),0)
+        self.assertEqual(no_audit,[])
+    def remaining(self, road, paths):
+        return list(tagged_sidewalks([road], paths, box(-500,-500,500,500),20,level))
+
+    def test_bent_sidewalk_has_no_buffer_cap_gaps(self):
+        road=way(1,[(0,0),(100,0)],highway='residential',sidewalk='left')
+        paths=[(LineString([a,b]),{}) for a,b in zip([(0,10),(30,12),(60,9)],[(30,12),(60,9),(100,10)])]
+        self.assertEqual(self.remaining(road,paths),[])
+
+    def test_direction_and_opposite_side(self):
+        path=(LineString([(0,10),(100,10)]),{})
+        for coords,side in [([(0,0),(100,0)],'left'), ([(100,0),(0,0)],'right')]:
+            road=way(1,coords,highway='residential',sidewalk=side)
+            self.assertEqual(self.remaining(road,[path]),[])
+            road[1]['sidewalk']='both'
+            rows=self.remaining(road,[path])
+            self.assertEqual(len(rows),1)
+            self.assertNotEqual(rows[0][1],side)
+            self.assertAlmostEqual(rows[0][2].length,100)
+
+    def test_real_unmapped_gap_and_grade_are_preserved(self):
+        road=way(1,[(0,0),(100,0)],highway='residential',sidewalk='left')
+        paths=[(LineString([(0,10),(40,10)]),{}),(LineString([(60,10),(100,10)]),{})]
+        self.assertAlmostEqual(sum(g.length for _,_,g in self.remaining(road,paths)),20)
+        self.assertAlmostEqual(sum(g.length for _,_,g in self.remaining(road,[(LineString([(0,10),(100,10)]),{'layer':'1'})])),100)
+        long_road=way(1,[(0,0),(200,0)],highway='residential',sidewalk='left')
+        almost_complete=[(LineString([(0,10),(90,10)]),{}),(LineString([(110,10),(200,10)]),{})]
+        self.assertAlmostEqual(sum(g.length for _,_,g in self.remaining(long_road,almost_complete)),20)
+        short_unmapped=way(1,[(0,0),(5,0)],highway='residential',sidewalk='left')
+        self.assertAlmostEqual(sum(g.length for _,_,g in self.remaining(short_unmapped,[])),5)
+
+    def test_shared_and_unknown_do_not_reappear_as_tagged_sidewalks(self):
+        for segregation in ('no', None):
+            tags={'highway':'cycleway','foot':'designated'}
+            if segregation:tags['segregated']=segregation
+            stats,_=measure(box(-10,-50,110,50),[way(1,[(0,0),(100,0)],highway='residential',sidewalk='left'),way(2,[(0,8),(100,8)],**tags)])
+            self.assertEqual(stats['tagged'],0)
+            self.assertAlmostEqual(stats['shared' if segregation else 'unknown'],100)
+
+    def test_saved_audit_paths_reproduce_direct_measure(self):
+        boundary=box(10,-50,90,50)
+        ways=[way(1,[(0,0),(100,0)],highway='residential',sidewalk='both'),
+              way(2,[(0,8),(60,8)],highway='footway',footway='sidewalk'),
+              way(3,[(0,-8),(100,-8)],highway='cycleway',foot='designated',segregated='no')]
+        stats,audit=measure(boundary,ways)
+        tags={oid:t for oid,t,_ in ways}
+        paths=[(transform(TO_METRES,shape(f['geometry'])),tags[f['properties']['osm_id']]) for f in audit if f['properties']['category']!='tagged']
+        refreshed=sum(g.length for _,_,g in tagged_sidewalks([ways[0]],paths,boundary,20,level))
+        self.assertGreater(stats['tagged'],20)
+        self.assertAlmostEqual(refreshed,stats['tagged'],places=5)
+
+    def test_sukkavartaankatu_has_no_tagged_fragments(self):
+        fixture=json.loads((Path(__file__).parent/'fixtures/tampere_tagged_overlap.json').read_text(encoding='utf-8'))
+        r=fixture['road']
+        paths=[(shape(p['geometry']),p['tags']) for p in fixture['paths']]
+        road=(r['id'],r['tags'],shape(r['geometry']))
+        self.assertEqual(list(tagged_sidewalks([road],paths,road[2].buffer(100),20,level)),[])
 
 def way(oid, coords, **tags):
     if tags.get('highway') in {'footway','cycleway','path'}:
@@ -454,6 +548,14 @@ class Geometry(unittest.TestCase):
         self.assertAlmostEqual(stats['footway'],100)
 
 class Integration(unittest.TestCase):
+    def test_publish_rejects_old_method_before_labelling_output(self):
+        with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parent) as temp:
+            root=Path(temp)
+            (root/'999.json').write_text(json.dumps({'signature':'old','method_version':'0.0.0'}),encoding='utf-8')
+            with self.assertRaises(ValueError):
+                publish(argparse.Namespace(results=str(root),output=str(root/'published.json')))
+            self.assertFalse((root/'published.json').exists())
+
     def test_osm_to_static_dashboard(self):
         with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parent) as temp:
             root=Path(temp)
@@ -470,7 +572,25 @@ class Integration(unittest.TestCase):
             self.assertFalse(data['demo']); self.assertEqual(row['rank_total_km'],1)
             self.assertTrue(.18 < row['total_km'] < .20)
             self.assertEqual(row['m_per_resident'],round(row['total_km'],4))
+            self.assertEqual(row['shared_m_per_resident'],0)
+            self.assertEqual(row['segregated_m_per_resident'],0)
+            self.assertEqual(row['rank_shared_m_per_resident'],1)
+            self.assertEqual(row['rank_segregated_m_per_resident'],1)
             self.assertTrue(row['map_path'].startswith('M'))
+            compact_args=argparse.Namespace(results=str(output),output=str(root/'table.json'),table_only=True,csv_output=str(root/'table.csv'),expected_count=1)
+            publish(compact_args)
+            compact=json.loads((root/'table.json').read_text(encoding='utf-8'))
+            self.assertNotIn('map_path',compact['municipalities'][0])
+            self.assertNotIn('geometry',compact['municipalities'][0])
+            self.assertEqual(compact['expected_count'],1)
+            self.assertEqual(compact['osm']['osm_date'],row['osm']['osm_date'])
+            with (root/'table.csv').open(encoding='utf-8-sig',newline='') as stream:
+                csv_row=next(csv.DictReader(stream))
+            self.assertEqual(float(csv_row['sidewalks_m_per_resident']),row['m_per_resident'])
+            self.assertEqual(csv_row['unknown_m_per_resident'],'0.0')
+            compact_args.expected_count=2
+            with self.assertRaises(ValueError):
+                publish(compact_args)
             gpkg=root/'inspection.gpkg'
             manifest=export_gpkg(output/'999.json',output/'999.segments.geojson',cache,gpkg)
             self.assertGreater(manifest['jalkakaytavat_ajoratatagit'],0)
@@ -479,6 +599,41 @@ class Integration(unittest.TestCase):
                 self.assertEqual(check.execute('SELECT COUNT(*) FROM gpkg_geometry_columns WHERE srs_id=3067').fetchone()[0],8)
                 length=check.execute('SELECT SUM(pituus_m) FROM jalkakaytavat_ajoratatagit').fetchone()[0]
                 self.assertAlmostEqual(length/1000,row['total_km'],places=5)
+            # Simulate an older export, keep a reader open, and migrate in place.
+            with closing(sqlite3.connect(gpkg)) as old:
+                old.execute('ALTER TABLE kuntaraja DROP COLUMN yhdistetty_m_asukas')
+                old.execute('ALTER TABLE kuntaraja DROP COLUMN eroteltu_m_asukas')
+                old.commit()
+            inode = gpkg.stat().st_ino
+            result = json.loads((output/'999.json').read_text(encoding='utf-8'))
+            with closing(sqlite3.connect(gpkg)) as reader:
+                geom_before = reader.execute('SELECT geom FROM kuntaraja').fetchone()[0]
+                refresh_gpkg(gpkg, result)
+                self.assertEqual(reader.execute('SELECT yhdistetty_m_asukas,eroteltu_m_asukas FROM kuntaraja').fetchone(),(0,0))
+                self.assertEqual(reader.execute('SELECT geom FROM kuntaraja').fetchone()[0],geom_before)
+                mismatch = dict(result, code='998')
+                with self.assertRaises(ValueError):
+                    refresh_gpkg(gpkg, mismatch)
+            self.assertEqual(gpkg.stat().st_ino,inode)
+            with closing(sqlite3.connect(cache)) as source:
+                tags_by_id={oid:json.loads(tags) for oid,tags in source.execute('SELECT id,tags FROM ways')}
+            tagged=[f for f in json.loads((output/'999.segments.geojson').read_text(encoding='utf-8'))['features'] if f['properties']['category']=='tagged']
+            with closing(sqlite3.connect(gpkg)) as reader:
+                geometry_before=reader.execute('SELECT geom FROM kuntaraja').fetchone()[0]
+                update_gpkg(gpkg,result,result,tagged,tags_by_id)
+                self.assertEqual(reader.execute('SELECT COUNT(*) FROM jalkakaytavat_ajoratatagit').fetchone()[0],len(tagged))
+                self.assertEqual(reader.execute('SELECT geom FROM kuntaraja').fetchone()[0],geometry_before)
+                self.assertAlmostEqual(reader.execute('SELECT SUM(mukaan_m) FROM osm_ajoradat').fetchone()[0],sum(f['properties']['length_m'] for f in tagged))
+            with fiona.open(gpkg,layer='jalkakaytavat_ajoratatagit') as features:
+                self.assertEqual(features.crs.to_epsg(),3067)
+                self.assertAlmostEqual(sum(shape(f['geometry']).length for f in features),result['km']['tagged']*1000,places=3)
+            self.assertEqual(gpkg.stat().st_ino,inode)
+            # A normal resumed compute must also enrich old results without measuring again.
+            legacy = {key:value for key,value in result.items() if key not in
+                      {'shared_m_per_resident','segregated_m_per_resident','metrics_version'}}
+            (output/'999.json').write_text(json.dumps(legacy),encoding='utf-8')
+            compute(args)
+            self.assertEqual(json.loads((output/'999.json').read_text(encoding='utf-8')),result)
             before=(output/'999.json').stat().st_mtime_ns
             compute(args)
             self.assertEqual(before,(output/'999.json').stat().st_mtime_ns)
