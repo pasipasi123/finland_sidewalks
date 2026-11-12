@@ -11,7 +11,7 @@ from contextlib import closing
 from pathlib import Path
 from shapely.geometry import LineString, box, shape
 from pipeline.rules import category, sidewalk_sides, tag_rejection, reference_road
-from pipeline.cli import measure, prepare, compute, publish, transform, TO_METRES, level
+from pipeline.cli import measure, prepare, compute, publish, transform, TO_METRES, level, VERSION
 from pipeline.platforms import platform_access_ways
 from pipeline.network import WalkingNetwork
 from pipeline.export_gpkg import export_gpkg, line_geometry, properties
@@ -548,6 +548,17 @@ class Geometry(unittest.TestCase):
         self.assertAlmostEqual(stats['footway'],100)
 
 class Integration(unittest.TestCase):
+    def test_exported_ranks_share_positions_for_equal_values(self):
+        with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parent) as temp:
+            root=Path(temp)
+            for code,length in [('111',10),('222',10),('333',1)]:
+                row={'code':code,'name':code,'population':1000,'population_date':'2025-12-31','population_source':'fixture','signature':'same','method_version':VERSION,'distance_m':20,'osm':{'osm_date':'2026-01-01'},'km':{'tagged':length,'footway':0,'shared':0,'segregated':0,'unknown':0},'total_km':length}
+                (root/f'{code}.json').write_text(json.dumps(row),encoding='utf-8')
+            publish(argparse.Namespace(results=str(root),output=str(root/'table.json'),table_only=True,expected_count=3))
+            rows=json.loads((root/'table.json').read_text(encoding='utf-8'))['municipalities']
+            self.assertEqual([r['rank_total_km'] for r in rows],[1,1,3])
+            self.assertEqual([r['rank_m_per_resident'] for r in rows],[1,1,3])
+
     def test_publish_rejects_old_method_before_labelling_output(self):
         with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parent) as temp:
             root=Path(temp)

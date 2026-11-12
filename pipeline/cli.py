@@ -406,8 +406,13 @@ def publish(args):
             if label!=row['name']:
                 row['name_aliases']=[label]
     for metric in ('total_km','m_per_resident', *PER_CAPITA):
-        for rank,row in enumerate(sorted(rows,key=lambda r:r[metric],reverse=True),1):
-            row['rank_'+metric] = rank
+        previous=None
+        position=0
+        for index,row in enumerate(sorted(rows,key=lambda r:r[metric],reverse=True),1):
+            if index==1 or row[metric]!=previous:
+                position=index
+            row['rank_'+metric] = position
+            previous=row[metric]
     table_only = getattr(args,'table_only',False)
     metadata = {'demo':False,'coverage_count':len(rows),'method_version':VERSION,'metrics_version':METRICS_VERSION,'license':'ODbL-1.0','population_license':'CC-BY-4.0'}
     if getattr(args,'expected_count',None) is not None:

@@ -1,23 +1,49 @@
 # Jalkakäytäväatlas
 
-Suomen kuntien **kadunvarsien jalkakäytävät kilometreinä ja metreinä asukasta kohti**. Python-laskenta käyttää paikallista OSM-PBF:ää ja kuntakohtaista SQLite-välimuistia. Tulokset viedään GeoPackageen karttatarkistusta varten ja valmiiksi JSON-aineistoksi erillistä käyttöliittymää varten. Overpassia tai tietokantapalvelinta ei tarvita.
+Suomen kuntien **kadunvarsien jalkakäytävät sekä yhdistetyt ja erotellut jalankulku- ja pyöräväylät kilometreinä ja metreinä asukasta kohti**. Python-laskenta käyttää paikallista OSM-PBF:ää ja kuntakohtaista SQLite-välimuistia. Verkkosivulle viedään valmiit JSON- ja CSV-yhteenvedot. GeoPackage-vienti on erillinen mahdollisuus karttatarkistuksiin. Overpassia tai tietokantapalvelinta ei tarvita.
 
-**Nykytila 11.11.2026:** menetelmä **1.6.4**, kuusi kuntaa laskettu samalla OSM-otoksella ja samoilla säännöillä. Väestön viitepäivä on kaikissa 31.12.2025.
+**Nykytila 12.11.2026:** menetelmä **1.6.5**, kaikki **308 kuntaa** käsitelty samalla OSM-otoksella ja samoilla säännöillä. Väestön viitepäivä on kaikissa 31.12.2025. Asukasmittarien versio **1.1.0** sisältää myös erottelultaan tuntemattomat väylät. Uusia katselupaketteja ei tehty valtakunnallisessa ajossa.
 
-| Kunta | Jalkakäytävät, km | m/asukas |
-| --- | ---: | ---: |
-| Helsinki | 1 188,606 | 1,7117 |
-| Espoo | 265,929 | 0,8164 |
-| Tampere | 336,610 | 1,2782 |
-| Vantaa | 174,536 | 0,6900 |
-| Oulu | 84,556 | 0,3888 |
-| Turku | 366,711 | 1,7493 |
+**[Jalkakäytäväatlas / Sidewalk Atlas · GitHub Pages](https://pasipasi123.github.io/finland_sidewalks/)** — pilkuilla useita kuntia hakeva haku, lajittelussa määräytyvät vertailusijat, väkiluvun kokoluokat, neljä väylätyyppiä ja suomen- sekä englanninkielinen käyttöliittymä. [Valtakunnallisen ajon raportti](reports/finland-v1.6.5.md).
 
-[Lähteet, laskentaluokat ja katseluaineistot: kuuden kaupungin raportti](reports/six-cities-v1.6.4.md).
+Ensimmäisen karttatarkistusjoukon kuusi kaupunkia:
+
+| Kunta | Jalkakäytävät, km | JK, m/asukas | Yhdistetty, m/asukas | Eroteltu, m/asukas |
+| --- | ---: | ---: | ---: | ---: |
+| Helsinki | 1 185,959 | 1,7079 | 0,2712 | 0,2976 |
+| Espoo | 265,476 | 0,8151 | 1,4902 | 0,1130 |
+| Tampere | 333,974 | 1,2682 | 1,1238 | 0,2442 |
+| Vantaa | 173,463 | 0,6857 | 1,7562 | 0,0719 |
+| Oulu | 82,544 | 0,3796 | 1,8421 | 0,0626 |
+| Turku | 365,698 | 1,7445 | 1,0486 | 0,2434 |
+
+Erotellun väylän jalankulku sisältyy myös jalkakäytävien summaan. Yhdistetyt ja erottelultaan tuntemattomat eivät sisälly siihen. Kaikki luvut koskevat kadunvarsia, eivät koko pyörätieverkkoa. Näistä kuudesta Oulussa on vähiten jalkakäytäviä ja eniten yhdistettyä väylää asukasta kohti.
+
+[Lähteet, laskentaluokat ja katseluaineistot: kuuden kaupungin raportti](reports/six-cities-v1.6.5.md).
 
 Kokonaisreitin rakenne, määränpäärajoitus ja ajoradan sidewalk-tieto karsivat pihareittien katuosumia. Lyhyet linkit voivat saada tukea hyväksytyistä jalkakäytävistä ja ylityksistä; itse ylityspituuksia ei lasketa. Living street -varret on rajattu pois, ja puuttuva pinta oletetaan asfaltiksi. Välimuistissa on 710 038 väylää, 308 kuntarajaa ja erillisenä kontekstina 4 933 laiturialuetta. Tampereen tarkistukset korjasivat bussikatujen valintaa, risteyskaarreaukkoja ja laiturille päättyvien footwayiden aiheuttamaa varsinaisen jalkakäytävän varjostusta. Luvut koskevat koko kuntia, eivät keskustoja.
 
 ## Laskennan käyttöönotto Windowsissa
+
+### Valtakunnallinen taulukkoaineisto
+
+Verkkosivu käyttää kuntakohtaisia yhteenvetoja hakemistosta `data/results/national`. Koko maan ajossa ei tarvita uusia katselupaketteja:
+
+```powershell
+./.venv/Scripts/python.exe scripts/fetch-population.py --codes all --year 2025 --output data/population-finland.csv
+./.venv/Scripts/python.exe -m pipeline.cli compute --population data/population-finland.csv --output data/results/national --summary-only
+./.venv/Scripts/python.exe -m pipeline.cli publish --results data/results/national --table-only --expected-count 308 --names-from data/raw/population-finland-2025.json --output web/data/municipalities.json --csv-output web/data/municipalities.csv
+node --test tests/web.test.mjs
+node scripts/validate-web-data.mjs
+```
+
+Jokainen kunta tallentuu heti valmistuessaan; kesken jäänyttä ajoa voi jatkaa samalla komennolla. `--summary-only` käyttää samoja laskentasääntöjä ja jättää tarkistusgeometrioiden viennin pois. Kuuden jo tarkistetun kaupungin tulokset voitiin käyttää uudelleen `python -m scripts.seed-national` -komennolla: se tarkistaa, että niiden menetelmä, kuntaraja, väkiluku, lähteet ja aiempi laskentatarkiste täsmäävät. Vanhoja tuloksia tai niiden GPKG-tiedostoja ei muuteta.
+
+Tiivis julkaisu sisältää valmiit kilometrit ja metriä/asukas-luvut jalkakäytäville, yhdistetyille, erotelluille ja erottelultaan tuntemattomille väylille. Kuntageometrioita ei siirretä taulukkosivulle. Julkaisun oletus on nyt valtakunnallinen taulukko: `data/results/national`, 308 kunnan kattavuusvaatimus ja CSV JSONin rinnalle. `--with-map` tuottaa tarvittaessa laajan koosteen erilliseen jatkokäyttöön.
+
+GitHub Pages julkaisee `web/`-hakemiston. Työnkulku tarkistaa kaikki 308 kuntakoodia ja väkilukua lähde-CSV:stä sekä valmiiden asukasmittarien vastaavuuden ennen julkaisua. Suomen- ja englanninkielisen sivun käyttö- ja julkaisuohje on [web/README.md](web/README.md).
+
+### Python-ympäristö
 
 Python 3.11+:
 
@@ -94,6 +120,8 @@ code,population,date,source
 
 Yksi rivi per laskettava kunta: kolminumeroinen kuntakoodi, positiivinen kokonaisluku, väestön viitepäivä ja täsmällinen lähde (taulukon tunniste tai URL). Erotin on pilkku. Asukaskohtainen mittari on `1000 * jalkakäytäväkilometrit / väestö`. Nollaa tai puuttuvaa väestöä ei esitetä asukaskohtaisena tuloksena. `data/population.example.csv` näyttää muodon **keksityllä testiarvolla**, jota ei pidä käyttää oikeaan laskentaan.
 
+Kuntatuloksen `shared_m_per_resident` lasketaan vastaavasti luokasta `km.shared` ja `segregated_m_per_resident` luokasta `km.segregated`. Versio 1.1.0 lisää `unknown_m_per_resident`-kentän luokasta `km.unknown`. Yksikkö on m/asukas, tarkkuus neljä desimaalia. Luokittelu perustuu jalankulkuun tarkoitettujen pyöräväylien `segregated=no/yes`-tietoon; puuttuvaa erottelutietoa ei arvata kumpaankaan ryhmään. `metrics_version` kertoo johdettujen mittareiden version erillään geometrian `method_version`-versiosta.
+
 ### 4. Aloita yhdestä kunnasta
 
 Oulun kuntakoodi on 564:
@@ -117,7 +145,18 @@ Tulokset:
 ./.venv/Scripts/python.exe -m pipeline.cli publish
 ```
 
-Komento päivittää `web/data/municipalities.json`-aineiston lasketuilla tuloksilla. Se laskee valmiiksi myös asukaskohtaiset luvut, sijoitukset ja EPSG:3067-karttapolut. Selain vain suodattaa, järjestää ja piirtää niitä. Eri lähtöaineistoilla laskettuja tuloksia ei voi yhdistää vahingossa: julkaisu tarkistaa yhteisen lähtötietojen tarkisteen. Sijoitus lasketaan vain mukana olevista kunnista. Laskematon kunta ei tarkoita nollaa.
+Komento päivittää `web/data/municipalities.json`- ja `.csv`-aineiston valtakunnallisista tuloksista. Oletuksena vaaditaan kaikki 308 kuntaa ja tuotetaan tiivis taulukko ilman geometrioita. Selain vain suodattaa, järjestää ja muotoilee valmiita arvoja. Eri lähtöaineistoilla laskettuja tuloksia ei voi yhdistää vahingossa: julkaisu tarkistaa yhteisen lähtötietojen tarkisteen ja menetelmäversion. Sijoitus lasketaan vain mukana olevista kunnista. Laskematon kunta ei tarkoita nollaa. Suppeampaa erillistä koostetta varten anna `--results` ja `--expected-count`; `--with-map` lisää EPSG:3067-karttapolut laajaan JSONiin.
+
+Yhdistettyjen ja eroteltujen asukasmittareiden sijoitukset ovat `rank_shared_m_per_resident` ja `rank_segregated_m_per_resident` (suurin saa sijoituksen 1). Koosteen voi tehdä paikallisesti koskematta web-aineistoon: `--output data/results/municipalities.json`.
+
+Vanhojen kuntatulosten asukasmittarit voi päivittää ilman geometrian uudelleenlaskentaa. Valitut olemassa olevat GeoPackaget päivitetään samassa tiedostossa, myös QGISin pitäessä niitä auki:
+
+```powershell
+./.venv/Scripts/python.exe -m pipeline.refresh_metrics --gpkg data/exports/oulu_analyysi.gpkg data/exports/tampere_analyysi.gpkg
+./.venv/Scripts/python.exe -m pipeline.cli publish --results data/results --with-map --expected-count 6 --output data/results/municipalities.json
+```
+
+Ilman `--gpkg`-valintaa päivitetään vain kuntatulokset. GeoPackagen `kuntaraja` saa sarakkeet `yhdistetty_m_asukas` ja `eroteltu_m_asukas`; mittarit päivittyvät myös `laskentatiedot`-taulukon tulos-JSONiin. Komento tarkistaa paketin kunnan ja lähtötietojen vastaavuuden. Geometrioita, tulostasoja tai pituuksia ei muuteta. Uudet laskennat ja viennit sisältävät mittarit suoraan.
 
 
 ### Tarkastele paikallisessa GeoPackagessa
@@ -155,7 +194,7 @@ Päivitys säilyttää tiedoston identiteetin, tasojen nimet, nykyiset tyylitaul
 
 `publish` tässä tarkoittaa paikallisen käyttöliittymäaineiston muodostamista; se ei siirrä mitään verkkoon. Varsinainen web-käyttöliittymä on erillinen toteutus.
 
-## Menetelmä v1.6.4
+## Menetelmä v1.6.5
 
 Kaikki pituudet ja etäisyydet lasketaan metreinä **ETRS-TM35FIN / EPSG:3067** -koordinaatistossa. Kuntarajan ulkopuoliset pituudet leikataan pois. Oletusetäisyys on **20 m ajoradan keskilinjasta**, muutettavissa `--distance 15` jne. Tämä on tutkimusparametri, ei OSM-standardin sääntö. Vertaa esimerkiksi 10 / 15 / 20 / 25 metrin ajoja erillisissä tuloshakemistoissa ennen johtopäätöksiä.
 
@@ -242,7 +281,17 @@ Jos ehdokkaan lähin fyysinen katu on `living_street`, osuus jää pois. Ajorada
 
 Lähtötasojen `varjossa_m` kertoo suoraan leikatun osuuden metreinä, `estaja_osm` sisemmän kulkureitin OSM-tunnisteet ja `viitekatu_osm` vertailukadut. `hylkayssyy=lahempi_jalankulkuvayla` kertoo kokonaan poissuljetusta ja `osittain_lahempi_jalankulkuvayla` osittain poissuljetusta lähdeviivasta. `pihakadun_varsi` kertoo living street -rajauksesta. Tarkat poistetut geometriat löytyvät tiedostosta `data/results/564.corridor_exclusions.geojson`, jonka voi avata erikseen QGISissä. Lyhyiden jäljelle jääneiden jaksojen poisto voi pienentää summaa enemmän kuin `varjossa_m`.
 
-Kaksoislaskennan vähennys: erillinen mukaan kelpaava jalkakäytävä ohittaa samalla puolella olevan ajoradan sidewalk-pituuden läheisen, samansuuntaisen ja samalla tasolla kulkevan osuutensa kohdalta. Puoli päätellään OSM-ajoradan viivan suunnasta. Vastakkainen puoli säilyy. Tämä on geometrinen heuristiikka, ei todistettu samaa fyysistä väylää koskeva tunnistus.
+Kaksoislaskennan vähennys (1.6.5): erillinen kadunvarsisuodatuksen hyväksymä jalankulkuväylä ohittaa samalla puolella olevan ajoradan sidewalk-pituuden läheisen, samansuuntaisen ja samalla tasolla kulkevan osuutensa kohdalta. Myös erillinen yhdistetty tai erottelultaan tuntematon väylä estää ajoratatägiä tuottamasta sen kohdalle ylimääräistä jalkakäytävää; se ei silti itse siirry jalkakäytäväsummaan. Puoli päätellään paikallisen ajoratasegmentin digitointisuunnasta: vasen on `left`, oikea `right`. Vastakkainen puoli säilyy.
+
+Peitto projisoidaan ajoradan pituussijainniksi ja yhdistetään alkuperäisen OSM-ajoratawayn koko pituudella. Erillisten viiden metrin footway-osien tasapäisiä puskureita ei vähennetä toisistaan: niiden suuntien vaihdellessa syntyneet kiilat aiheuttivat pistemäisiä jäännöksiä ajoratatasolle. Tavallinen peittovälin toleranssi on 1 m ja wayn päädyn toleranssi 2 m. Kun vähintään 85 % tietystä kadunpuolesta on jo erillisgeometrialla katettu, enintään 15 m väli- ja päätyjäännökset tulkitaan saman jalkakäytävän jatkumoksi ja poistetaan ajoratatägeistä. Pidemmät ja laajemmat ilman erillisgeometriaa olevat osuudet säilyvät. Suuntaeron yläraja on 30° ja sivuttaisen merkin toleranssi 0,25 m. Tämä on geometrinen heuristiikka, ei todistettu samaa fyysistä väylää koskeva tunnistus.
+
+Version 1.6.4 tulokset voi päivittää nopeasti laskemalla vain ajoratatägien peiton uudelleen. Komento tarkistaa vanhan lähtötietojen tarkisteen, käyttää muuttumattomia erillisten väylien auditointigeometrioita ja päivittää myös katselupaketin samassa tiedostossa. Kuntatulosten varmuuskopiot tallentuvat hakemistoon `data/results/v1.6.4-before-tagged-dedup/` ja katselupaketin rinnalle syntyy `*_before_v1_6_5.gpkg`.
+
+```powershell
+./.venv/Scripts/python.exe -m pipeline.refresh_tagged --code 837 --population data/population.csv --gpkg data/exports/tampere_analyysi.gpkg
+```
+
+Normaali `compute` käyttää samaa peittolaskentaa suoraan. Nopeaa päivitystä ei käytetä, jos lähtötiedot tai erillisten väylien säännöt ovat muuttuneet.
 
 ## Epävarmuudet ja jatkokehitys
 
