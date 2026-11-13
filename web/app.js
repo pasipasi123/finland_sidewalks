@@ -1,5 +1,5 @@
 import {TYPES,SORT_KEYS,SIZE_CLASSES,cohortRows,queryRows,valueFor,validateDataset} from './data-model.js';
-import {messages} from './i18n.js?v=copy-4';
+import {messages} from './i18n.js?v=copy-5';
 
 const $=selector=>document.querySelector(selector);
 const readState=()=>{

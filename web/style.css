@@ -309,13 +309,6 @@ h2{
   width:235px;
   min-height:41px
 }
-.rank-note{
-  padding:0 30px 16px;
-  margin:0;
-  font-size:11px;
-  line-height:1.7;
-  color:var(--muted)
-}
 .search-box{
   display:flex;
   align-items:center;
@@ -798,10 +791,6 @@ footer a:hover{
     width:0;
     min-width:0;
     flex:1
-  }
-  .rank-note{
-    padding:0 18px 15px;
-    font-size:10px
   }
   .search-box{
     flex:1;
