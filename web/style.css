@@ -141,7 +141,7 @@ nav>a:hover{
   padding:52px 44px;
   margin:0 -44px 30px;
   align-items:center;
-  background:linear-gradient(115deg,#103590 0%,#1746c7 55%,#315ee0 100%);
+  background:radial-gradient(ellipse at 100% 0%,#c72d4599,transparent 65%),linear-gradient(120deg,#0b163d 0%,#1746c7 38%,#493399 72%,#94294d 100%);
   color:#fff;
   border-radius:0 0 16px 16px
 }
@@ -178,7 +178,7 @@ h1{
   border:1px solid #ffffff30;
   border-radius:10px;
   padding:28px;
-  background:linear-gradient(145deg,#d12d48,#a51b38);
+  background:radial-gradient(ellipse at 0% 0%,#e43a51,transparent 75%),linear-gradient(145deg,#c72d45 0%,#941d4c 55%,#391b59 100%);
   box-shadow:0 16px 32px #071d5833
 }
 .coverage-number{
@@ -228,7 +228,7 @@ h1{
   left:0;
   right:0;
   height:5px;
-  background:linear-gradient(90deg,#1746c7 0%,#1746c7 68%,#d12d48 68%,#d12d48 100%)
+  background:var(--accent-gradient)
 }
 .section-top{
   display:flex;
@@ -236,7 +236,7 @@ h1{
   justify-content:space-between;
   gap:20px;
   padding:30px 30px 25px;
-  background:#12141c;
+  background:linear-gradient(110deg,#10131f 0%,#19254b 55%,#4d2045 100%);
   color:#fff
 }
 .section-top .eyebrow{
@@ -266,7 +266,7 @@ h2{
   padding:0 30px;
   border-bottom:0;
   overflow:auto;
-  background:linear-gradient(100deg,#1746c7,#103590);
+  background:linear-gradient(105deg,#1746c7 0%,#303fa9 55%,#762a66 100%);
   scrollbar-color:#91a9ef #103590
 }
 .type-tabs button{
@@ -281,7 +281,7 @@ h2{
 }
 .type-tabs button[aria-selected=true]{
   border-bottom-color:#fff;
-  background:linear-gradient(120deg,#c72d45,#a51b38);
+  background:linear-gradient(120deg,#d12d48,#912449);
   color:#fff
 }
 .type-tabs button:hover{
@@ -511,7 +511,7 @@ tbody tr:last-child td{
   letter-spacing:-1px
 }
 .why{
-  background:linear-gradient(115deg,#b51f3b,#ce304c);
+  background:radial-gradient(ellipse at 100% 100%,#d3334d99,transparent 65%),linear-gradient(115deg,#25205c 0%,#7f2454 45%,#bc2543 100%);
   color:#fff;
   border-radius:12px;
   padding:36px
@@ -618,7 +618,7 @@ footer{
   font-size:10px;
   line-height:1.8;
   color:#e2e8f7;
-  background:#12141c;
+  background:linear-gradient(110deg,#10131f 0%,#19254b 55%,#4d2045 100%);
   border-radius:12px 12px 0 0
 }
 footer a{
