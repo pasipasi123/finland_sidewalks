@@ -1,12 +1,13 @@
 :root{
   font-family:Inter,"Segoe UI",Arial,sans-serif;
-  color:#193e36;
-  background:#f6f7f2;
-  --ink:#193e36;
-  --green:#184e43;
-  --muted:#5d6d65;
-  --line:#d7dfd4;
-  --lime:#bde883;
+  color:#12141c;
+  background:#f7f9fe;
+  --ink:#12141c;
+  --blue:#1746c7;
+  --muted:#586173;
+  --line:#dce2ed;
+  --red:#c72d45;
+  --accent-gradient:linear-gradient(110deg,#1746c7 0%,#3157c6 55%,#c72d45 100%);
   font-synthesis:none
 }
 *{
@@ -17,7 +18,12 @@ html{
   scroll-padding-top:24px
 }
 body{
-  margin:0
+  margin:0;
+  background:radial-gradient(ellipse 950px 620px at 2% -100px,#1746c714,transparent 75%),radial-gradient(ellipse 700px 550px at 100% 80px,#c72d4512,transparent 75%),linear-gradient(180deg,#f9fbff 0%,#fff 1200px,#f7f9fe 100%)
+}
+::selection{
+  background:#dfe8ff;
+  color:var(--ink)
 }
 a{
   color:inherit;
@@ -30,7 +36,7 @@ button{
   cursor:pointer
 }
 button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visible,.table-scroll:focus-visible{
-  outline:3px solid #a45e19;
+  outline:3px solid #c72d45;
   outline-offset:4px
 }
 button:disabled{
@@ -63,12 +69,22 @@ button:disabled{
   padding-right:44px
 }
 .site-header{
+  position:relative;
   min-height:91px;
   display:flex;
   align-items:center;
   justify-content:space-between;
   gap:24px;
   border-bottom:1px solid var(--line)
+}
+.site-header::after{
+  content:"";
+  position:absolute;
+  bottom:-1px;
+  left:44px;
+  right:44px;
+  height:2px;
+  background:linear-gradient(90deg,transparent,#1746c780 25%,#c72d4580 78%,transparent)
 }
 .brand{
   display:flex;
@@ -78,7 +94,7 @@ button:disabled{
   font-size:18px;
   font-weight:750;
   letter-spacing:-.5px;
-  color:var(--green)
+  color:var(--ink)
 }
 nav{
   display:flex;
@@ -113,8 +129,9 @@ nav>a:hover{
   padding:7px 8px
 }
 .languages button[aria-pressed=true]{
-  background:var(--green);
-  color:#fff
+  background:linear-gradient(135deg,#1746c7,#103590);
+  color:#fff;
+  box-shadow:0 2px 6px #1746c72b
 }
 .hero{
   display:grid;
@@ -129,7 +146,7 @@ nav>a:hover{
   letter-spacing:1.8px;
   line-height:1.6;
   margin:0 0 18px;
-  color:var(--green)
+  color:var(--blue)
 }
 h1,h2{
   margin:0;
@@ -138,7 +155,17 @@ h1,h2{
 h1{
   font-size:clamp(40px,5.4vw,60px);
   letter-spacing:-2.9px;
-  line-height:1.07
+  line-height:1.07;
+  width:fit-content;
+  max-width:100%
+}
+@supports (background-clip:text) or (-webkit-background-clip:text){
+  h1{
+    background:linear-gradient(110deg,#12141c 12%,#1746c7 68%,#b4233c 100%);
+    background-clip:text;
+    -webkit-background-clip:text;
+    color:transparent
+  }
 }
 .lead{
   font-size:16px;
@@ -152,6 +179,7 @@ h1{
   padding-left:32px
 }
 .coverage-number{
+  color:var(--blue);
   font-size:76px;
   font-weight:550;
   line-height:1;
@@ -165,8 +193,9 @@ h1{
 }
 .coverage-rule{
   height:5px;
-  width:36px;
-  background:var(--lime);
+  width:56px;
+  border-radius:4px;
+  background:var(--accent-gradient);
   margin:23px 0
 }
 .coverage>.snapshot{
@@ -179,14 +208,24 @@ h1{
   letter-spacing:1px;
   line-height:1.6;
   margin-top:17px;
-  color:var(--green)
+  color:var(--blue)
 }
 .comparison{
+  position:relative;
   background:#fff;
   border:1px solid var(--line);
   border-radius:10px;
   overflow:hidden;
-  box-shadow:0 5px 24px #193e3604
+  box-shadow:0 16px 50px #162c5c0c,0 2px 6px #162c5c05
+}
+.comparison::before{
+  content:"";
+  position:absolute;
+  top:0;
+  left:0;
+  right:0;
+  height:3px;
+  background:var(--accent-gradient)
 }
 .section-top{
   display:flex;
@@ -207,12 +246,13 @@ h2{
 .download{
   font-size:12px;
   text-decoration:none;
-  border-bottom:1px solid #879c84;
+  border-bottom:1px solid #7184b0;
   padding:6px 0;
   white-space:nowrap
 }
 .download:hover{
-  border-color:var(--green)
+  border-color:var(--red);
+  color:var(--red)
 }
 .type-tabs{
   display:flex;
@@ -232,17 +272,21 @@ h2{
   font-weight:600
 }
 .type-tabs button[aria-selected=true]{
-  border-bottom-color:var(--green);
-  color:var(--green)
+  border-bottom-color:transparent;
+  background:var(--accent-gradient) left bottom/100% 3px no-repeat;
+  color:var(--blue)
+}
+.type-tabs button:hover{
+  color:var(--blue)
 }
 .type-description{
   padding:16px 30px;
   margin:0;
-  background:#f4f7ef;
+  background:linear-gradient(105deg,#edf2ff,#f6f8ff 65%,#fff3f5);
   font-size:12px;
   line-height:1.7;
   min-height:70px;
-  color:#4e6557
+  color:#424f6a
 }
 .table-tools{
   display:flex;
@@ -261,7 +305,7 @@ h2{
   white-space:nowrap
 }
 .cohort-control select{
-  border:1px solid #bbcbbb;
+  border:1px solid #8795b2;
   padding:11px 10px;
   border-radius:5px;
   background:#fff;
@@ -281,7 +325,7 @@ h2{
   display:flex;
   align-items:center;
   gap:8px;
-  border:1px solid #bbcbbb;
+  border:1px solid #8795b2;
   border-radius:5px;
   padding:0 11px;
   background:white;
@@ -289,7 +333,7 @@ h2{
 }
 .search-box svg{
   fill:none;
-  stroke:#68816f;
+  stroke:#586d9b;
   stroke-width:1.6;
   flex-shrink:0
 }
@@ -312,7 +356,7 @@ h2{
 .table-scroll{
   max-height:650px;
   overflow:auto;
-  scrollbar-color:#c3d1bd #f3f6ef;
+  scrollbar-color:#aab9dc #f1f4fb;
   scrollbar-width:thin
 }
 table{
@@ -326,7 +370,7 @@ thead th{
   position:sticky;
   top:0;
   z-index:1;
-  background:#fafbf8;
+  background:#f7f9fd;
   border-top:1px solid var(--line);
   border-bottom:1px solid var(--line);
   padding:0;
@@ -359,18 +403,19 @@ th:last-child button{
 }
 .sort-icon{
   font-size:15px;
-  color:#8fa188
+  color:#697790
 }
 th[aria-sort=ascending],th[aria-sort=descending]{
-  color:var(--green);
-  background:#eef4e8
+  color:var(--blue);
+  background:linear-gradient(180deg,#e6edff,#f3f6ff);
+  box-shadow:inset 0 -2px 0 var(--blue)
 }
 th[aria-sort=ascending] .sort-icon,th[aria-sort=descending] .sort-icon{
-  color:var(--green)
+  color:var(--red)
 }
 td{
   padding:16px 22px;
-  border-bottom:1px solid #e7ece3;
+  border-bottom:1px solid #e7ebf3;
   line-height:1.35
 }
 td.municipality{
@@ -399,7 +444,7 @@ td.municipality{
 }
 .municipality small{
   display:inline-block;
-  color:#73816f;
+  color:#667085;
   font-size:9px;
   letter-spacing:.6px;
   font-weight:400;
@@ -407,10 +452,10 @@ td.municipality{
 }
 td.primary-number{
   font-weight:650;
-  color:var(--green)
+  color:var(--blue)
 }
 tbody tr:hover{
-  background:#f4f8ef
+  background:#f1f5ff
 }
 tbody tr:last-child td{
   border-bottom:0
@@ -422,7 +467,7 @@ tbody tr:last-child td{
   font-size:11px;
   line-height:1.8;
   border-top:1px solid var(--line);
-  background:#fcfcf9
+  background:#fafbfe
 }
 .empty{
   padding:26px 30px;
@@ -436,8 +481,8 @@ tbody tr:last-child td{
   font-size:13px
 }
 .load-status.error{
-  color:#8e3629;
-  background:#fff4ee
+  color:#b4233c;
+  background:#fff1f3
 }
 .editorial{
   display:grid;
@@ -453,18 +498,21 @@ tbody tr:last-child td{
 .prose{
   font-size:14px;
   line-height:1.9;
-  color:#4f6256
+  color:#424b5d
 }
 .prose p{
   margin:0 0 17px
 }
 .prose a{
-  color:var(--green)
+  color:var(--blue)
+}
+.prose a:hover,nav>a:hover,footer a:hover{
+  color:var(--red)
 }
 .prose code{
   font-family:ui-monospace,monospace;
   font-size:.9em;
-  background:#edf2e8;
+  background:#edf2ff;
   padding:1px 3px
 }
 .prose details{
@@ -485,15 +533,15 @@ tbody tr:last-child td{
   padding-top:15px
 }
 .legal{
-  background:#eaf0e3;
+  background:linear-gradient(120deg,#eef3ff,#fff4f6);
   border:0!important;
-  border-left:3px solid #acc792!important;
+  border-left:3px solid #c72d45!important;
   padding:18px 21px!important;
   margin-top:27px
 }
 .legal .interpretation{
   padding:12px 15px;
-  background:#f6f8f1;
+  background:#ffffff;
   font-size:13px
 }
 .legal small{
@@ -605,7 +653,12 @@ footer a:hover{
     position:sticky;
     top:0;
     z-index:5;
-    background:#f6f7f2
+    background:#ffffffed;
+    backdrop-filter:blur(12px)
+  }
+  .site-header::after{
+    left:18px;
+    right:18px
   }
   .brand{
     font-size:15px;
@@ -809,5 +862,12 @@ footer a:hover{
 @media(prefers-reduced-motion:reduce){
   html{
     scroll-behavior:auto
+  }
+}
+@media(forced-colors:active){
+  h1{
+    background:none;
+    color:CanvasText;
+    -webkit-text-fill-color:CanvasText
   }
 }
