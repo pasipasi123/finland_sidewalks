@@ -205,14 +205,6 @@ h1{
   font-size:11px;
   line-height:1.8
 }
-.data-stamp{
-  display:block;
-  font-size:8px;
-  letter-spacing:1px;
-  line-height:1.6;
-  margin-top:17px;
-  color:#fff
-}
 .comparison{
   position:relative;
   background:#fff;
@@ -290,15 +282,6 @@ h2{
 }
 .type-tabs button[aria-selected=true]:hover{
   background:#a51b38
-}
-.type-description{
-  padding:16px 30px;
-  margin:0;
-  background:linear-gradient(105deg,#edf2ff,#f6f8ff 65%,#fff3f5);
-  font-size:12px;
-  line-height:1.7;
-  min-height:70px;
-  color:#424f6a
 }
 .table-tools{
   display:flex;
@@ -768,7 +751,7 @@ footer a:hover{
     font-size:10px;
     grid-column:2
   }
-  .coverage-rule,.data-stamp{
+  .coverage-rule{
     display:none
   }
   .section-top{
@@ -797,11 +780,6 @@ footer a:hover{
   .type-tabs button{
     font-size:12px;
     padding:15px 14px 14px
-  }
-  .type-description{
-    padding:13px 18px;
-    font-size:11px;
-    min-height:84px
   }
   .table-tools{
     padding:18px;

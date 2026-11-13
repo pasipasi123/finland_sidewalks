@@ -61,6 +61,5 @@ test('Zero is a result; missing data and demo data are not results',()=>{
 });
 test('Finnish and English cover the same controls and content',()=>{
  assert.deepEqual(Object.keys(messages.fi).sort(),Object.keys(messages.en).sort());
- assert.deepEqual(Object.keys(messages.fi.descriptions).sort(),Object.keys(messages.en.descriptions).sort());
  for(const language of ['fi','en']) assert.ok(messages[language].legalBody.includes('https://www.finlex.fi/fi/lainsaadanto/2018/729'));
 });

@@ -1,5 +1,5 @@
 import {TYPES,SORT_KEYS,SIZE_CLASSES,cohortRows,queryRows,valueFor,validateDataset} from './data-model.js';
-import {messages} from './i18n.js';
+import {messages} from './i18n.js?v=copy-4';
 
 const $=selector=>document.querySelector(selector);
 const readState=()=>{
@@ -40,7 +40,6 @@ function renderText(){
   document.querySelectorAll('[data-i18n-placeholder]').forEach(element=>element.setAttribute('placeholder',t[element.dataset.i18nPlaceholder]));
   $('.brand').setAttribute('aria-label',t.brand);
   document.querySelectorAll('[data-lang]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.lang===state.lang)));
-  $('#type-description').textContent=t.descriptions[state.type];
   $('#table-caption').textContent=`${t[state.type]}: ${t.rowNumber}, ${t.length}, ${t.perCapita}, ${t.population}`;
   $('#table-panel').setAttribute('aria-labelledby',`tab-${state.type}`);
   $('#size-options').label=t.sizeGroup;
